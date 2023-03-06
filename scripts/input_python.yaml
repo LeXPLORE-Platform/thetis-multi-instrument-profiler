@@ -1,0 +1,19 @@
+# This file contains all the output directories where the processed data is stored by the main running script
+
+#### DO NOT CHANGE THE VARIABLE NAMES ####
+
+# Level 0 input directory
+#Level0_dir: "/home/jamesrunnalls/git/thetis/data/Level0/Testing"
+Level0_dir: "D:/thetis_Level0_20221224/Level0/Processed"
+#Level0_dir: "C:/Users/Seatronic 1147/Documents/Data_Lexplore/git/thetis-profiler/data/Level0/Processed"
+
+# Level 1 output directory
+Level1_dir: "D:/thetis_Level0_20221224/Level1"
+#Level1_dir: "C:/Users/Seatronic 1147/Documents/Data_Lexplore/git/thetis-profiler/data/Level1/"
+
+# Level 2 output directory
+Level2_dir: "D:/thetis_Level0_20221224/Level2"
+#Level2_dir: "C:/Users/Seatronic 1147/Documents/Data_Lexplore/git/thetis-profiler/data/Level2/"
+
+Calibration_dir: "C:/Projects/datalakes/thetis-vertical-profiler/thetis-vertical-profiler/calibration/"
+#Calibration_dir: "C:/Users/Seatronic 1147/Documents/Data_Lexplore/git/thetis-profiler/calibration/"

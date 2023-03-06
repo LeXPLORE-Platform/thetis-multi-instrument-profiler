@@ -1,0 +1,34 @@
+{
+    "ACS": [
+        {
+            "start": 1539813600,
+            "end": 1635112800,
+            "tab_cal_ACS": "acs286.dev",
+            "tab_Corr": "Temp_Salinity_Corrtable.txt"
+        },
+		{
+            "start": 1635112801,
+            "end": false,
+            "tab_cal_ACS": "acs380.dev",
+            "tab_Corr": "Temp_Salinity_Corrtable.txt"
+        }
+    ],
+    "OCR": [
+        {
+            "start": 1539813600,
+            "end": 1617228000,
+            "tab_cal_HPE": "HPE557A.cal",
+            "tab_cal_PED": "PED557A.cal",
+            "tab_cal_HPL": "HPL441A.cal",
+            "tab_cal_PLD": "PLD441A.cal"
+        },
+		{
+            "start": 1618351200,
+            "end": false,
+            "tab_cal_HPE": "HPE0557C.cal",
+            "tab_cal_PED": "PED0557C.cal",
+            "tab_cal_HPL": "HPL0441C.cal",
+            "tab_cal_PLD": "PLD0441C.cal"
+        }
+    ]
+}
