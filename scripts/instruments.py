@@ -877,127 +877,127 @@ class process_ACS(thetis):
             return False
         log("Reading ACS data from: " + file, 3)
 
-        # try:
-        with open(file) as f:
-            index_begin = 0
-            for idx, line in enumerate(f):
-                if "Timestamp (s)" in line:
-                    idx_count = line.split("\t").index("C ref dark")
-                if len(line.split("\t")) > 300:
-                    index_begin = idx
-                    break
+        try:
+            with open(file) as f:
+                index_begin = 0
+                for idx, line in enumerate(f):
+                    if "Timestamp (s)" in line:
+                        idx_count = line.split("\t").index("C ref dark")
+                    if len(line.split("\t")) > 300:
+                        index_begin = idx
+                        break
 
-        df = pd.read_csv(file, sep="\t", skiprows=index_begin, header=None, error_bad_lines=False, engine="python")
-        df.dropna(subset=[4], inplace=True)
+            df = pd.read_csv(file, sep="\t", skiprows=index_begin, header=None, error_bad_lines=False, engine="python")
+            df.dropna(subset=[4], inplace=True)
 
-        df["depth"] = np.interp(np.array(df[0]), ctd["time"], ctd["depth"]) + self.offset
-        df["temp"] = np.interp(np.array(df[0]), ctd["time"], ctd["temp"])
-        df["sal"] = np.interp(np.array(df[0]), ctd["time"], ctd["sal"])
+            df["depth"] = np.interp(np.array(df[0]), ctd["time"], ctd["depth"]) + self.offset
+            df["temp"] = np.interp(np.array(df[0]), ctd["time"], ctd["temp"])
+            df["sal"] = np.interp(np.array(df[0]), ctd["time"], ctd["sal"])
 
-        df = df[df['depth'] < ctd["depth"].max()]
-        df = df[df['depth'] > ctd["depth"].min()]
+            df = df[df['depth'] < ctd["depth"].max()]
+            df = df[df['depth'] > ctd["depth"].min()]
 
-        # simplifying variable names from calibration extraction
-        landa_A = np.array(calibration["landa_A"])
-        A0 = np.array(calibration["A0"])
-        A_corr = np.array(calibration["A_corr"])
-        t_bins = np.array(calibration["t_bins"])
-        landa_C = np.array(calibration["landa_C"])
-        C0 = np.array(calibration["C0"])
-        C_corr = np.array(calibration["C_corr"])
-        tcal = np.array(calibration["tcal"])
+            # simplifying variable names from calibration extraction
+            landa_A = np.array(calibration["landa_A"])
+            A0 = np.array(calibration["A0"])
+            A_corr = np.array(calibration["A_corr"])
+            t_bins = np.array(calibration["t_bins"])
+            landa_C = np.array(calibration["landa_C"])
+            C0 = np.array(calibration["C0"])
+            C_corr = np.array(calibration["C_corr"])
+            tcal = np.array(calibration["tcal"])
 
-        n_wl = len(landa_C)
+            n_wl = len(landa_C)
 
-        ACS = df.to_numpy()
-        C_ref_dark = ACS[:, idx_count].astype('float64')
-        C_ref = ACS[:, idx_count + 1:idx_count + 1 + n_wl].astype('float64')
-        C_sig_dark = ACS[:, idx_count + 1 + n_wl].astype('float64')
-        C_sig = ACS[:, idx_count + 2 + n_wl:idx_count + 2 + 2 * n_wl].astype('float64')
+            ACS = df.to_numpy()
+            C_ref_dark = ACS[:, idx_count].astype('float64')
+            C_ref = ACS[:, idx_count + 1:idx_count + 1 + n_wl].astype('float64')
+            C_sig_dark = ACS[:, idx_count + 1 + n_wl].astype('float64')
+            C_sig = ACS[:, idx_count + 2 + n_wl:idx_count + 2 + 2 * n_wl].astype('float64')
 
-        A_ref_dark = ACS[:, idx_count + 2 + 2 * n_wl].astype('float64')
-        A_ref = ACS[:, idx_count + 3 + 2 * n_wl:idx_count + 3 + 3 * n_wl].astype('float64')
-        A_sig_dark = ACS[:, idx_count + 3 + 3 * n_wl].astype('float64')
-        A_sig = ACS[:, idx_count + 4 + 3 * n_wl:idx_count + 4 + 4 * n_wl].astype('float64')
-        ext_tc = ACS[:, idx_count + 4 + 4 * n_wl].astype('float64')
-        int_tc = ACS[:, idx_count + 5 + 4 * n_wl].astype('float64')
+            A_ref_dark = ACS[:, idx_count + 2 + 2 * n_wl].astype('float64')
+            A_ref = ACS[:, idx_count + 3 + 2 * n_wl:idx_count + 3 + 3 * n_wl].astype('float64')
+            A_sig_dark = ACS[:, idx_count + 3 + 3 * n_wl].astype('float64')
+            A_sig = ACS[:, idx_count + 4 + 3 * n_wl:idx_count + 4 + 4 * n_wl].astype('float64')
+            ext_tc = ACS[:, idx_count + 4 + 4 * n_wl].astype('float64')
+            int_tc = ACS[:, idx_count + 5 + 4 * n_wl].astype('float64')
 
-        # ext_t = -7.1023317e-13 * ext_tc ** 3 + 7.09341920e-8 * ext_tc ** 2 - 3.87065673e-3 * ext_tc + 95.8241397
-        res = 10000 * (5 * int_tc / 65535) / (4.516 - (5 * int_tc / 65535))
-        int_t = 1 / (0.00093135 + 0.000221631 * np.log(res) + 0.000000125741 * np.log(res) ** 3) - 273.15
+            # ext_t = -7.1023317e-13 * ext_tc ** 3 + 7.09341920e-8 * ext_tc ** 2 - 3.87065673e-3 * ext_tc + 95.8241397
+            res = 10000 * (5 * int_tc / 65535) / (4.516 - (5 * int_tc / 65535))
+            int_t = 1 / (0.00093135 + 0.000221631 * np.log(res) + 0.000000125741 * np.log(res) ** 3) - 273.15
 
-        mat_A = counts_to_spectra(A_ref, A_sig, int_t, landa_A, A0, A_corr, t_bins)
-        mat_C = counts_to_spectra(C_ref, C_sig, int_t, landa_C, C0, C_corr, t_bins)
+            mat_A = counts_to_spectra(A_ref, A_sig, int_t, landa_A, A0, A_corr, t_bins)
+            mat_C = counts_to_spectra(C_ref, C_sig, int_t, landa_C, C0, C_corr, t_bins)
 
-        mat_A = temperature_salinity_correction(mat_A, landa_A, calibration["tab_Corr"], np.array(df["sal"]),
-                                                np.array(df["temp"]), tcal, "A")
-        mat_C = temperature_salinity_correction(mat_C, landa_C, calibration["tab_Corr"], np.array(df["sal"]),
-                                                np.array(df["temp"]), tcal, "C")
+            mat_A = temperature_salinity_correction(mat_A, landa_A, calibration["tab_Corr"], np.array(df["sal"]),
+                                                    np.array(df["temp"]), tcal, "A")
+            mat_C = temperature_salinity_correction(mat_C, landa_C, calibration["tab_Corr"], np.array(df["sal"]),
+                                                    np.array(df["temp"]), tcal, "C")
 
-        mat_A = scattering_correction(mat_A, mat_C, landa_C, landa_A) # based on Stockley et al., 2017, Optics Express, model PROP-RR
+            mat_A = scattering_correction(mat_A, mat_C, landa_C, landa_A) # based on Stockley et al., 2017, Optics Express, model PROP-RR
 
-        # Only unique depths
-        depth, unique = np.unique(np.array(df["depth"]), return_index=True)
-        time = np.array(df[0])[unique]
-        mat_A = mat_A[unique]
-        mat_C = mat_C[unique]
+            # Only unique depths
+            depth, unique = np.unique(np.array(df["depth"]), return_index=True)
+            time = np.array(df[0])[unique]
+            mat_A = mat_A[unique]
+            mat_C = mat_C[unique]
 
-        # Sort base on depth
-        sort = np.argsort(depth)
-        depth = depth[sort]
-        time = time[sort]
-        mat_A = mat_A[sort]
-        mat_C = mat_C[sort]
-        mat_B = mat_C - mat_A
+            # Sort base on depth
+            sort = np.argsort(depth)
+            depth = depth[sort]
+            time = time[sort]
+            mat_A = mat_A[sort]
+            mat_C = mat_C[sort]
+            mat_B = mat_C - mat_A
 
-        self.data["wavelength"] = landa_A
+            self.data["wavelength"] = landa_A
 
 
 
-        ### smooth A and C vertically
-        """
-        df_A = pd.DataFrame(np.array(mat_A), index=depth, columns=landa_A)
-        df_C = pd.DataFrame(np.array(mat_C), index=depth, columns=landa_C)
-        df_A = smooth_acs_vertically(df_A)
-        df_C = smooth_acs_vertically(df_C)
-        mat_A = df_A.to_numpy()
-        mat_C = df_C.to_numpy()
-        mat_B = mat_C - mat_A
-        """
+            ### smooth A and C vertically
+            """
+            df_A = pd.DataFrame(np.array(mat_A), index=depth, columns=landa_A)
+            df_C = pd.DataFrame(np.array(mat_C), index=depth, columns=landa_C)
+            df_A = smooth_acs_vertically(df_A)
+            df_C = smooth_acs_vertically(df_C)
+            mat_A = df_A.to_numpy()
+            mat_C = df_C.to_numpy()
+            mat_B = mat_C - mat_A
+            """
 
-        # Binning option
-        """
-        self.data["depth"] = np.arange(2, 50, bin)
-        self.data["a"] = bin_array(mat_A, depth, self.data["depth"])
-        self.data["b"] = bin_array(mat_B, depth, self.data["depth"])
-        self.data["c"] = bin_array(mat_C, depth, self.data["depth"])
-        self.data["time"] = bin_array(time, depth, self.data["depth"])
-        """
+            # Binning option
+            """
+            self.data["depth"] = np.arange(2, 50, bin)
+            self.data["a"] = bin_array(mat_A, depth, self.data["depth"])
+            self.data["b"] = bin_array(mat_B, depth, self.data["depth"])
+            self.data["c"] = bin_array(mat_C, depth, self.data["depth"])
+            self.data["time"] = bin_array(time, depth, self.data["depth"])
+            """
 
-        # Not binning
-        self.data["depth"] = depth
-        self.data["a"] = mat_A
-        self.data["b"] = mat_B
-        self.data["c"] = mat_C
-        self.data["time"] = time
+            # Not binning
+            self.data["depth"] = depth
+            self.data["a"] = mat_A
+            self.data["b"] = mat_B
+            self.data["c"] = mat_C
+            self.data["time"] = time
 
-        w700 = find_closest_index(landa_A, 700)
-        self.data["a700"] = self.data["a"][:, w700]
-        self.data["b700"] = self.data["b"][:, w700]
-        self.data["c700"] = self.data["c"][:, w700]
+            w700 = find_closest_index(landa_A, 700)
+            self.data["a700"] = self.data["a"][:, w700]
+            self.data["b700"] = self.data["b"][:, w700]
+            self.data["c700"] = self.data["c"][:, w700]
 
-        self.data["aLH676"] = absorption_line_height(landa_A, self.data["a"], 676)
-        self.data["Sk"] = spectral_attenuation_slope(landa_C, self.data["c"])
+            self.data["aLH676"] = absorption_line_height(landa_A, self.data["a"], 676)
+            self.data["Sk"] = spectral_attenuation_slope(landa_C, self.data["c"])
 
-        if len(time) < 20:
-            log("Erroneous profile", 3)
-            return False
+            if len(time) < 20:
+                log("Erroneous profile", 3)
+                return False
 
-        log("Successfully read data", 3)
-        """except:
+            log("Successfully read data", 3)
+        except:
             print(sys.exc_info())
             log("Failed to parse data")
-            return False"""
+            return False
         return True
 
     def quality_flags(self):

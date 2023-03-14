@@ -5,7 +5,7 @@ import yaml
 from functions import log, error, parse_args
 from instruments import process_CTD, process_DO, process_PAR, process_TRIP1, process_TRIP2, process_ACS, process_OCR1, process_OCR2, process_grid
 
-with open(r"scripts\input_python.yaml", "r") as f:
+with open(r"C:\Users\Seatronic 1147\Documents\Data_Lexplore\git\thetis-multi-instrument-profiler\scripts\input_python.yaml", "r") as f:
     directories = yaml.load(f, Loader=yaml.FullLoader)
 
 directory, ids = parse_args(directories["Level0_dir"])

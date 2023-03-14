@@ -2,11 +2,7 @@
 setlocal enabledelayedexpansion
 
 :: Ensure correct location
-cd "C:\Users\Seatronic 1147\Documents\Data_Lexplore\git\thetis-profiler"
-
-:: Ensure repo up to date
-:: git stash
-:: git pull
+cd "C:\Users\Seatronic 1147\Documents\Data_Lexplore\git\thetis-multi-instrument-profiler"
 
 :: Load input parameters
 call "scripts\input_batch.bat"
@@ -52,7 +48,25 @@ move %in%"\*" %failed%
 :: Move back summaries file
 move %failed%"\*.xml" %in%
 
-:: Push changes to remote repository
-git add --all
-git commit -m "Auto upload"
-git push
+%pythonenv% %upload% -w
+
+curl "https://api.datalakes-eawag.ch/update/802"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/803"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/804"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/805"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/806"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/807"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/808"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/809"
+timeout 20
+curl "https://api.datalakes-eawag.ch/update/822"
+
+
+
