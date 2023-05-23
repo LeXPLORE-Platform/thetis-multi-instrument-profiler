@@ -41,14 +41,14 @@ class thetis(object):
     def to_NetCDF(self, folder, prefix):
         log("Writing " + prefix + " data to NetCDF", 3)
 
-        dt = datetime.utcfromtimestamp(np.nanmin(self.data["time"]))
+        dt_max = datetime.utcfromtimestamp(np.nanmax(self.data["time"]))
         today = datetime.utcnow()
 
-        if dt > today:
+        if dt_max > today:
             log("Failed to write future data to NetCDF")
             return False
 
-        dt = dt.strftime('%Y%m%d_%H%M%S')
+        dt = datetime.utcfromtimestamp(np.nanmin(self.data["time"])).strftime('%Y%m%d_%H%M%S')
 
         file_folder = os.path.join(folder, self.type)
         if not os.path.exists(file_folder):
