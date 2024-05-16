@@ -170,7 +170,8 @@ def scattering_correction(mat_A, mat_C, landa_C, landa_A):
         A_landa_ref = A_NIR.min()
         C_landa_ref = C_NIR[np.argmin(A_NIR)]
 
-        epsilon = (A_landa_ref-0.212*np.power(A_landa_ref, 1.135)) * (mat_C[i, :] - mat_A[i, :]) / (C_landa_ref - A_landa_ref)
+        #epsilon = (A_landa_ref-0.212*np.power(A_landa_ref, 1.135)) * (mat_C[i, :] - mat_A[i, :]) / (C_landa_ref - A_landa_ref)
+        epsilon = (A_landa_ref) * (mat_C[i, :] - mat_A[i, :]) / (C_landa_ref - A_landa_ref)  # Fazel updated option
         mat_A[i, :] = mat_A[i, :] - epsilon
     return mat_A
 

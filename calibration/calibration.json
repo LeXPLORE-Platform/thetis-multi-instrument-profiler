@@ -8,8 +8,14 @@
         },
 		{
             "start": 1635112801,
-            "end": false,
+            "end": 1692172800,
             "tab_cal_ACS": "acs380.dev",
+            "tab_Corr": "Temp_Salinity_Corrtable.txt"
+        },
+        {
+            "start": 1692172800,
+            "end": false,
+            "tab_cal_ACS": "acs286_v2.dev",
             "tab_Corr": "Temp_Salinity_Corrtable.txt"
         }
     ],
