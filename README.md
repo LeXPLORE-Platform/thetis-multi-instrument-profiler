@@ -78,7 +78,7 @@ The Thetis profiler consists of a suite of physical and bio-optical sensors moun
 
 Calibration of the optical sensors is funded by SCNAT
 
-<img src="https://datalakes-eawag.s3.eu-central-1.amazonaws.com/images/scnat.png" width="200" />
+![SCNAT Logo](https://datalakes-eawag.s3.eu-central-1.amazonaws.com/images/scnat.png)
 
 ## Installation
 
