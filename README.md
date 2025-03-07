@@ -74,6 +74,12 @@ The Thetis profiler consists of a suite of physical and bio-optical sensors moun
 - **Setup**:  integration from 400 to 700 nm. Vertical resolution (assuming a standard 10cm/s rising speed): 10 m
 
 
+## Calibration
+
+Calibration of the optical sensors is funded by SCNAT
+
+<img src="https://datalakes-eawag.s3.eu-central-1.amazonaws.com/images/scnat.png" width="200" />
+
 ## Installation
 
 :warning You need to have [git](https://git-scm.com/downloads) and [git-lfs](https://git-lfs.github.com/) installed in order to successfully clone the repository.
