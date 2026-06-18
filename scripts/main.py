@@ -20,6 +20,7 @@ def main(server=False, logs=False):
         os.makedirs(directories[directory], exist_ok=True)
     directories["Level0"] = os.path.join(directories["Level0"], "Processed")
     calibration = os.path.join(repo, "calibration")
+    qa_file = os.path.join(repo, "notes/quality_assurance.json")
     edited_files = []
 
     log.begin_stage("Collecting inputs")
@@ -43,11 +44,10 @@ def main(server=False, logs=False):
     for id in ids:
         l2_datasets = {}
         sensor = CTD()
-        id_code = id.split("/")[-1]
         if sensor.read_data(id, directories["Level0"]):
             sensor.multiple_profiles()
-            sensor.quality_assurance(file_path="notes/quality_assurance.json")
-            edited_files.extend(sensor.export(os.path.join(directories["Level1"], "CTD"), "L1_LexploreThetis_CTD_" + id_code))
+            sensor.quality_assurance(file_path=qa_file)
+            edited_files.extend(sensor.export(os.path.join(directories["Level1"], "CTD"), "L1_LexploreThetis_CTD"))
             sensor.mask_data()
             ctd_data = sensor.export_data()
             l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
@@ -55,54 +55,54 @@ def main(server=False, logs=False):
             sensor = DO()
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
-                sensor.quality_assurance(file_path="notes/quality_assurance.json")
-                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "DO"), "L1_LexploreThetis_DO" + id_code))
+                sensor.quality_assurance(file_path=qa_file)
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "DO"), "L1_LexploreThetis_DO"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
             sensor = PAR()
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
-                sensor.quality_assurance(file_path="notes/quality_assurance.json")
-                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "PAR"), "L1_LexploreThetis_PAR" + id_code))
+                sensor.quality_assurance(file_path=qa_file)
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "PAR"), "L1_LexploreThetis_PAR"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
             sensor = TRIP1()
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
-                sensor.quality_assurance(file_path="notes/quality_assurance.json")
-                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP1"), "L1_LexploreThetis_TRIP1" + id_code))
+                sensor.quality_assurance(file_path=qa_file)
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP1"), "L1_LexploreThetis_TRIP1"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
             sensor = TRIP2()
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
-                sensor.quality_assurance(file_path="notes/quality_assurance.json")
-                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP2"), "L1_LexploreThetis_TRIP2" + id_code))
+                sensor.quality_assurance(file_path=qa_file)
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP2"), "L1_LexploreThetis_TRIP2"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
             sensor = ACS()
             if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
-                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                sensor.quality_assurance(file_path=qa_file)
                 sensor.custom_quality_flags()
-                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "ACS"), "L1_LexploreThetis_ACS" + id_code))
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "ACS"), "L1_LexploreThetis_ACS"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
             sensor = OCR1()
             if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
-                sensor.quality_assurance(file_path="notes/quality_assurance.json")
-                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR1"), "L1_LexploreThetis_OCR1" + id_code))
+                sensor.quality_assurance(file_path=qa_file)
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR1"), "L1_LexploreThetis_OCR1"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "wavelength")
 
             sensor = OCR2()
             if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
-                sensor.quality_assurance(file_path="notes/quality_assurance.json")
-                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR2"), "L1_LexploreThetis_OCR2" + id_code))
+                sensor.quality_assurance(file_path=qa_file)
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR2"), "L1_LexploreThetis_OCR2"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "wavelength")
 

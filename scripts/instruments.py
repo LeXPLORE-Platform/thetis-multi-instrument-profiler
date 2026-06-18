@@ -254,6 +254,7 @@ class CTD(Thetis):
 
     def read_data(self, id, folder):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
         if os.path.isfile(os.path.join(folder, str(id) + "_PPB_CTD.txt")):
             file = os.path.join(folder, str(id) + "_PPB_CTD.txt")
@@ -319,6 +320,7 @@ class DO(Thetis):
 
     def read_data(self, id, folder, ctd):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
         if os.path.isfile(os.path.join(folder, str(id) + "_PPB_DO.txt")):
             file = os.path.join(folder, str(id) + "_PPB_DO.txt")
@@ -380,6 +382,7 @@ class PAR(Thetis):
 
     def read_data(self, id, folder, ctd):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
         if os.path.isfile(os.path.join(folder, str(id) + "_PPB_PARS.txt")):
             file = os.path.join(folder, str(id) + "_PPB_PARS.txt")
@@ -468,6 +471,7 @@ class TRIP1(Thetis):
 
     def read_data(self, id, folder, ctd):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
         if os.path.isfile(os.path.join(folder, str(id) + "_PPB_TRIP1.txt")):
             file = os.path.join(folder, str(id) + "_PPB_TRIP1.txt")
@@ -606,6 +610,7 @@ class TRIP2(Thetis):
 
     def read_data(self, id, folder, ctd):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
         if os.path.isfile(os.path.join(folder, str(id) + "_PPB_TRIP2.txt")):
             file = os.path.join(folder, str(id) + "_PPB_TRIP2.txt")
@@ -786,6 +791,7 @@ class ACS(Thetis):
 
     def read_data(self, id, folder, calibration_dir, ctd, bin=0.125):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
         if os.path.isfile(os.path.join(folder, str(id) + "_ACS_ACS.txt")):
             file = os.path.join(folder, str(id) + "_ACS_ACS.txt")
@@ -941,6 +947,7 @@ class OCR1(Thetis):
 
     def read_data(self, id, folder, calibration_dir, ctd):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
 
         if os.path.isfile(os.path.join(folder, str(id) + "_PPB_OCR1.txt")):
@@ -1065,6 +1072,7 @@ class OCR2(Thetis):
 
     def read_data(self, id, folder, calibration_dir, ctd):
         self.id = id
+        self.general_attributes["profile_id"] = id.split("/")[-1]
         self.folder = folder
 
         if os.path.isfile(os.path.join(folder, str(id) + "_PPB_OCR2.txt")):
