@@ -1,97 +1,121 @@
 # -*- coding: utf-8 -*-
-import sys
 import os
-import yaml
-from functions import log, error, parse_args
-from instruments import process_CTD, process_DO, process_PAR, process_TRIP1, process_TRIP2, process_ACS, process_OCR1, process_OCR2, process_grid
+import sys
+import json
+import time
+import argparse
+from instruments import CTD, DO, PAR, TRIP1, TRIP2, ACS, OCR1, OCR2, process_grid
+from general.functions import logger, files_in_directory
+from functions import retrieve_new_files, parse_ids_from_files
 
-with open(r"C:\Users\Seatronic 1147\Documents\Data_Lexplore\git\thetis-multi-instrument-profiler\scripts\input_python.yaml", "r") as f:
-    directories = yaml.load(f, Loader=yaml.FullLoader)
+def main(server=False, logs=False):
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if logs:
+        log = logger(os.path.join(repo, "logs/thetis"))
+    else:
+        log = logger()
+    log.initialise("Processing Lexplore Thetis data")
+    directories = {f: os.path.join(repo, "data", f) for f in ["Level0", "Level1", "Level2"]}
+    for directory in directories:
+        os.makedirs(directories[directory], exist_ok=True)
+    directories["Level0"] = os.path.join(directories["Level0"], "Processed")
+    calibration = os.path.join(repo, "calibration")
+    edited_files = []
 
-directory, ids = parse_args(directories["Level0_dir"])
-log("Python script to process the output data of the Thetis profiler. Collecting profiles from: " + directory, start=True)
+    log.begin_stage("Collecting inputs")
+    if server:
+        log.info("Processing files from sftp server")
+        if not os.path.exists(os.path.join(repo, "creds.json")):
+            raise ValueError("Credential file required to retrieve live data from the fstp server.")
+        with open(os.path.join(repo, "creds.json"), 'r') as f:
+            creds = json.load(f)
+        files = retrieve_new_files(directories["Level0"], creds, server_location="data/Thetis", filetype=".txt")
+        edited_files = edited_files + files
+    else:
+        files = files_in_directory(directories["Level0"])
+        files.sort()
+        log.info("Reprocessing complete dataset from {}".format(directories["Level0"]))
+    log.end_stage()
 
-log("Creating directories")
-for d in directories.values():
-    if not os.path.exists(d):
-        os.makedirs(d)
-ids.sort()
+    log.begin_stage("Processing data...")
+    ids = parse_ids_from_files(files)
 
-log("Looping over input ids")
-for id in ids:
-    log("Processing files with input id: "+id, 1)
+    for id in ids:
+        l2_datasets = {}
+        sensor = CTD()
+        id_code = id.split("/")[-1]
+        if sensor.read_data(id, directories["Level0"]):
+            sensor.multiple_profiles()
+            sensor.quality_assurance(file_path="notes/quality_assurance.json")
+            edited_files.extend(sensor.export(os.path.join(directories["Level1"], "CTD"), "L1_LexploreThetis_CTD_" + id_code))
+            sensor.mask_data()
+            ctd_data = sensor.export_data()
+            l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-    l2_datasets = {}
-    log("Processing CTD data", 2)
-    CTD = process_CTD()
-    if CTD.read_data(id, directory):
-        CTD.multiple_profiles()
-        CTD.quality_flags()
-        CTD.to_NetCDF(directories["Level1_dir"], "L1")
-        CTD.mask_data()
-        CTD_data = CTD.export_data()
-        l2_datasets = CTD.resample_to_fixed_grid(l2_datasets, "depth")
+            sensor = DO()
+            if sensor.read_data(id, directories["Level0"], ctd_data):
+                sensor.multiple_profiles()
+                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "DO"), "L1_LexploreThetis_DO" + id_code))
+                sensor.mask_data()
+                l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-        log("Processing DO data", 2)
-        DO = process_DO()
-        if DO.read_data(id, directory, CTD_data):
-            DO.multiple_profiles()
-            DO.quality_flags()
-            DO.to_NetCDF(directories["Level1_dir"], "L1")
-            DO.mask_data()
-            l2_datasets = DO.resample_to_fixed_grid(l2_datasets, "depth")
+            sensor = PAR()
+            if sensor.read_data(id, directories["Level0"], ctd_data):
+                sensor.multiple_profiles()
+                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "PAR"), "L1_LexploreThetis_PAR" + id_code))
+                sensor.mask_data()
+                l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-        log("Processing PAR data", 2)
-        PAR = process_PAR()
-        if PAR.read_data(id, directory, CTD_data):
-            PAR.multiple_profiles()
-            PAR.quality_flags()
-            PAR.to_NetCDF(directories["Level1_dir"], "L1")
-            PAR.mask_data()
-            l2_datasets = PAR.resample_to_fixed_grid(l2_datasets, "depth")
+            sensor = TRIP1()
+            if sensor.read_data(id, directories["Level0"], ctd_data):
+                sensor.multiple_profiles()
+                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP1"), "L1_LexploreThetis_TRIP1" + id_code))
+                sensor.mask_data()
+                l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-        log("Processing TRIP1 data", 2)
-        TRIP1 = process_TRIP1()
-        if TRIP1.read_data(id, directory, CTD_data):
-            TRIP1.multiple_profiles()
-            TRIP1.quality_flags()
-            TRIP1.to_NetCDF(directories["Level1_dir"], "L1")
-            TRIP1.mask_data()
-            l2_datasets = TRIP1.resample_to_fixed_grid(l2_datasets, "depth")
+            sensor = TRIP2()
+            if sensor.read_data(id, directories["Level0"], ctd_data):
+                sensor.multiple_profiles()
+                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP2"), "L1_LexploreThetis_TRIP2" + id_code))
+                sensor.mask_data()
+                l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-        log("Processing TRIP2 data", 2)
-        TRIP2 = process_TRIP2()
-        if TRIP2.read_data(id, directory, CTD_data):
-            TRIP2.multiple_profiles()
-            TRIP2.quality_flags()
-            TRIP2.to_NetCDF(directories["Level1_dir"], "L1")
-            TRIP2.mask_data()
-            l2_datasets = TRIP2.resample_to_fixed_grid(l2_datasets, "depth")
+            sensor = ACS()
+            if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
+                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                sensor.custom_quality_flags()
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "ACS"), "L1_LexploreThetis_ACS" + id_code))
+                sensor.mask_data()
+                l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-        log("Processing ACS data", 2)
-        ACS = process_ACS()
-        if ACS.read_data(id, directory, directories["Calibration_dir"], CTD_data):
-            ACS.quality_flags()
-            ACS.to_NetCDF(directories["Level1_dir"], "L1")
-            ACS.mask_data()
-            l2_datasets = ACS.resample_to_fixed_grid(l2_datasets, "depth")
+            sensor = OCR1()
+            if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
+                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR1"), "L1_LexploreThetis_OCR1" + id_code))
+                sensor.mask_data()
+                l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "wavelength")
 
-        log("Processing OCR data", 2)
-        OCR1 = process_OCR1()
-        if OCR1.read_data(id, directory, directories["Calibration_dir"], CTD_data):
-            OCR1.quality_flags()
-            OCR1.to_NetCDF(directories["Level1_dir"], "L1")
-            OCR1.mask_data()
-            l2_datasets = OCR1.resample_to_fixed_grid(l2_datasets, "wavelength")
+            sensor = OCR2()
+            if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
+                sensor.quality_assurance(file_path="notes/quality_assurance.json")
+                edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR2"), "L1_LexploreThetis_OCR2" + id_code))
+                sensor.mask_data()
+                l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "wavelength")
 
-        log("Processing OCR data", 2)
-        OCR2 = process_OCR2()
-        if OCR2.read_data(id, directory, directories["Calibration_dir"], CTD_data):
-            OCR2.quality_flags()
-            OCR2.to_NetCDF(directories["Level1_dir"], "L1")
-            OCR2.mask_data()
-            l2_datasets = OCR2.resample_to_fixed_grid(l2_datasets, "wavelength")
+            grid = process_grid()
+            l2_datasets = grid.radiance_products(l2_datasets)
+            grid.createl2product(directories["Level2"], l2_datasets)
+    log.end_stage()
 
-        grid = process_grid()
-        l2_datasets = grid.radiance_products(l2_datasets)
-        grid.createl2product(directories["Level2_dir"], l2_datasets)
+    return edited_files
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--server', '-s', help="Collect and process new files from FTP server", action='store_true')
+    parser.add_argument('--logs', '-l', help="Write logs to file", action='store_true')
+    args = vars(parser.parse_args())
+    main(server=args["server"], logs=args["logs"])

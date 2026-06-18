@@ -7,58 +7,50 @@ from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 from scipy.signal import savgol_filter
 from scipy import interpolate
-import matplotlib.pyplot as plt
+from general.functions import logger
 from operator import itemgetter
 
 
-def parse_args(directory):
-    parser = argparse.ArgumentParser()
+def retrieve_new_files(folder, creds, log=logger(), server_location="data", filetype=".dat"):
+    files = []
+    log.info("Connecting to {}.".format(creds["ftp"]), indent=1)
+    ftp = ftplib.FTP(creds["ftp"], creds["user"], creds["password"], timeout=100)
+    server_files = ftp.nlst(server_location)
+    server_files.sort()
+    local_files = os.listdir(folder)
+    for file in server_files:
+        file_name = os.path.basename(file)
+        if file_name not in local_files and file.endswith(filetype) and "status" not in file_name:
+            log.info("Downloading file {}".format(file), indent=2)
+            download_file(os.path.join(file), os.path.join(folder, file_name), ftp)
+            files.append(os.path.join(folder, file_name))
+        try:
+            if (datetime.now() - datetime.strptime(file_name[:10], "%Y-%m-%d")) > timedelta(days=30):
+                log.info("Remove old file {} from server".format(file), indent=2)
+                ftp.delete(file)
+        except Exception as e:
+            log.info("Couldn't detect date of {}".format(file), indent=2)
+    files.sort()
+    log.info("{} new files found on the server.".format(len(files)), indent=1)
+    return files
 
-    parser.add_argument("--directory", "-d",
-                        help="Directory containing raw Thetis data files. Defaults to directory in YAML file.")
-    parser.add_argument("--id", "-i",
-                        help="Specify id of raw data to process from folder. Defaults to all ids in directory.")
 
-    args = parser.parse_args()
+def download_file(server, local, ftp):
+    with open(local, "wb") as f:
+        ftp.retrbinary("RETR " + server, f.write)
+
+def parse_ids_from_files(files):
     ids = []
-    if args.directory:
-        if os.path.exists(args.directory):
-            directory = args.directory
-        else:
-            error('Not a valid directory.')
-    if args.id:
-        ids = [args.id]
-    else:
-        files = os.listdir(directory)
-        for file in files:
-            if ".txt" in file:
-                id = file.split("_")[0]
-                if id not in ids:
-                    ids.append(id)
-    return directory, ids
-
-
-def log(str, indent=0, start=False):
-    if start:
-        out = "\n" + str + "\n"
-        with open("log.txt", "w") as file:
-            file.write(out + "\n")
-    else:
-        out = datetime.now().strftime("%H:%M:%S.%f") + (" " * 3 * (indent + 1)) + str
-        with open("log.txt", "a") as file:
-            file.write(out + "\n")
-    print(out)
-
-
-def error(str):
-    out = datetime.now().strftime("%H:%M:%S.%f") + "   ERROR: " + str
-    with open("log.txt", "a") as file:
-        file.write(out + "\n")
-    raise ValueError(str)
+    for file in files:
+        if ".txt" in file:
+            id = file.split("_")[0]
+            if id not in ids:
+                ids.append(id)
+    return ids
 
 
 def find_closest_index(arr, value):
-    return min(range(len(arr)), key=lambda i: abs(arr[i] - value))
+    return int(np.argmin(np.abs(np.asarray(arr) - value)))
 
 
 def is_number(n):
@@ -124,36 +116,33 @@ def despike(array, prominence=0.2):
 
 def counts_to_spectra(ref, sig, t, landa, offset, tab_corr, t_bins):
     ref[ref == 0] = np.nan
+    sig[sig == 0] = np.nan
     t_calib = np.array(t_bins).astype('float64')
     t_calib = t_calib[~np.isnan(t_calib)]
     mat = np.empty((len(sig), len(landa),))
     mat[:] = np.nan
     t_max = t_calib.max()
     for i in range(len(sig)):
-        if t[i] <= t_max:
-            T_closest = find_nearest(t_calib, t[i])
-            if t[i] - T_closest < 0:
-                T_0 = t_calib[find_closest_index(t_calib, t[i])-1]
-                T_1 = T_closest
-            else:
-               T_0 = T_closest
-               T_1 = t_calib[find_closest_index(t_calib, t[i])+1]
-
-            ind_T_0 = find_closest_index(t_calib, T_0)
-            ind_T_1 = ind_T_0+1
+        if t_calib.min() <= t[i] <= t_max:
+            ind_closest = find_closest_index(t_calib, t[i])
+            # lower bracket index, clamped so ind_T_0 + 1 is always in range
+            ind_T_0 = ind_closest - 1 if t[i] < t_calib[ind_closest] else ind_closest
+            ind_T_0 = min(max(ind_T_0, 0), len(t_calib) - 2)
+            ind_T_1 = ind_T_0 + 1
+            T_0 = t_calib[ind_T_0]
+            T_1 = t_calib[ind_T_1]
             dT = tab_corr[:, ind_T_0] + (t[i] - T_0) / (T_1 - T_0) * (tab_corr[:, ind_T_1] - tab_corr[:, ind_T_0])
             mat[i, :] = (offset - np.log(sig[i]/ref[i]) / 0.25) - dT
     return mat
 
 
 def temperature_salinity_correction(mat, landa, tab_Corr, sal, temp, T_ref, type):
+    corr_landa = np.array(tab_Corr["landa"])[:, 0]
+    corr_psiT = np.array(tab_Corr["psiT"])[:, 0]
+    corr_psi_Sal = np.array(tab_Corr["psi_Sal_a" if type == "A" else "psi_Sal_c"])[:, 0]
     for i in range(len(landa)):
-        idx = find_closest_index(np.array(tab_Corr["landa"])[:, 0], landa[i])
-        if type == "A":
-            psi_Sal = np.array(tab_Corr["psi_Sal_a"])[idx][0]
-        elif type == "C":
-            psi_Sal = np.array(tab_Corr["psi_Sal_c"])[idx][0]
-        mat[:, i] = mat[:, i] - (np.array(tab_Corr["psiT"])[idx, 0] * (temp - T_ref) + psi_Sal * sal)
+        idx = find_closest_index(corr_landa, landa[i])
+        mat[:, i] = mat[:, i] - (corr_psiT[idx] * (temp - T_ref) + corr_psi_Sal[idx] * sal)
     return mat
 
 
@@ -329,8 +318,8 @@ def acsa_complete_qc_v02(df_a_raw):  # qc of absorption raw dataframe
     df_a_raw_neg = df_a_raw.copy()
     ind_neg = np.where(df_a_raw < 0)
     for ii in range(len(ind_neg[0])):
-        df_a_raw_neg.iloc[ind_neg[0][ii]][[df_a_raw_neg.columns[ind_neg[1][ii]]]] = np.nan
-        df_a_neg_flag.iloc[ind_neg[0][ii]][[df_a_neg_flag.columns[ind_neg[1][ii]]]] = qc_flag_neg
+        df_a_raw_neg.iloc[ind_neg[0][ii], ind_neg[1][ii]] = np.nan
+        df_a_neg_flag.iloc[ind_neg[0][ii], ind_neg[1][ii]] = qc_flag_neg
 
     ###### Flag for spikes
     qc_flag_spk = 3
@@ -346,8 +335,8 @@ def acsa_complete_qc_v02(df_a_raw):  # qc of absorption raw dataframe
         low_bnd = np.nanpercentile(dum_arr, low_percentile)
 
         ind_spike = np.where((dum_arr > up_bnd) | (dum_arr < low_bnd))[0]
-        df_a_raw_neg_spike[df_a_raw_neg_spike.columns[ii]].iloc[ind_spike] = np.nan
-        df_a_spike_flag[df_a_spike_flag.columns[ii]].iloc[ind_spike] = qc_flag_spk
+        df_a_raw_neg_spike.iloc[ind_spike, ii] = np.nan
+        df_a_spike_flag.iloc[ind_spike, ii] = qc_flag_spk
 
     ###### Flag for problematic acs spectra
     df_a_raw_nan_interp = df_a_raw_neg_spike.copy()
@@ -407,8 +396,8 @@ def acsc_complete_qc_v02(df_c_raw):  # qc of attenuation raw dataframe
     df_c_raw_neg = df_c_raw.copy()
     ind_neg = np.where(df_c_raw < 0)
     for ii in range(len(ind_neg[0])):
-        df_c_raw_neg.iloc[ind_neg[0][ii]][[df_c_raw_neg.columns[ind_neg[1][ii]]]] = np.nan
-        df_c_neg_flag.iloc[ind_neg[0][ii]][[df_c_neg_flag.columns[ind_neg[1][ii]]]] = qc_flag_neg
+        df_c_raw_neg.iloc[ind_neg[0][ii], ind_neg[1][ii]] = np.nan
+        df_c_neg_flag.iloc[ind_neg[0][ii], ind_neg[1][ii]] = qc_flag_neg
 
     ###### Flag for spikes
     qc_flag_spk = 3
@@ -424,8 +413,8 @@ def acsc_complete_qc_v02(df_c_raw):  # qc of attenuation raw dataframe
         low_bnd = np.nanpercentile(dum_arr, low_percentile)
 
         ind_spike = np.where((dum_arr > up_bnd) | (dum_arr < low_bnd))[0]
-        df_c_raw_neg_spike[df_c_raw_neg_spike.columns[ii]].iloc[ind_spike] = np.nan
-        df_c_spike_flag[df_c_spike_flag.columns[ii]].iloc[ind_spike] = qc_flag_spk
+        df_c_raw_neg_spike.iloc[ind_spike, ii] = np.nan
+        df_c_spike_flag.iloc[ind_spike, ii] = qc_flag_spk
 
     ###### Interpolate in the z direction
     df_c_acs_nan = df_c_raw_neg_spike.copy()

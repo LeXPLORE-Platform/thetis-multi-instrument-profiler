@@ -14,20 +14,19 @@ import datetime as dt
 from datetime import datetime, timezone
 from copy import deepcopy
 import json
-from functions import log, error, isnt_number, scattering_correction, position_in_array, oxygen_saturation, \
+from functions import isnt_number, scattering_correction, position_in_array, oxygen_saturation, \
     counts_to_spectra, temperature_salinity_correction, find_closest_index, bin_array, \
     absorption_line_height, spectral_attenuation_slope, read_ocr_calibration_data, \
     spectral_light_attenuation_coefficient, read_acs_calibration_data, despike, smooth_acs_vertically
+from general.functions import GenericInstrument
 
 
-class thetis(object):
-    def __init__(self):
-        self.id = ""
-        self.folder = ""
-        self.data = {}
+class Thetis(GenericInstrument):
+    def __init__(self, *args, **kwargs):
+        super(Thetis, self).__init__(*args, **kwargs)
         self.general_attributes = {
             "institution": "EPFL",
-            "source": "Thetis CTD",
+            "source": "Thetis",
             "references": "LéXPLORE common instruments camille.minaudo@ub.edu>",  # consider changing contact person
             "history": "See history on Renku",
             "conventions": "CF 1.7",
@@ -35,117 +34,53 @@ class thetis(object):
             "title": "Lexplore Thetis"
         }
 
+        self.id = ""
+        self.folder = ""
+
+
     def export_data(self):
         return self.data
-
-    def to_NetCDF(self, folder, prefix):
-        log("Writing " + prefix + " data to NetCDF", 3)
-
-        dt_max = datetime.utcfromtimestamp(np.nanmax(self.data["time"]))
-        today = datetime.utcnow()
-
-        if dt_max > today:
-            log("Failed to write future data to NetCDF")
-            return False
-
-        dt = datetime.utcfromtimestamp(np.nanmin(self.data["time"])).strftime('%Y%m%d_%H%M%S')
-
-        file_folder = os.path.join(folder, self.type)
-        if not os.path.exists(file_folder):
-            os.makedirs(file_folder)
-        filename = "_".join([prefix, "THETIS", self.type, self.id, dt + ".nc"])
-        filepath = os.path.join(file_folder, filename)
-
-        nc = netCDF4.Dataset(filepath, mode='w', format='NETCDF4')
-
-        for key in self.general_attributes:
-            setattr(nc, key, self.general_attributes[key])
-
-        for key, values in self.dimensions.items():
-            nc.createDimension(values['dim_name'], values['dim_size'])
-
-        for key, values in self.variables.items():
-            var = nc.createVariable(values["var_name"], np.float64, values["dim"], fill_value=np.nan)
-            var.units = values["unit"]
-            var.long_name = values["longname"]
-            var[:] = self.data[key]
-
-        # Close NetCDF file
-        nc.close()
-        log("Successfully wrote NetCDF file", 3)
-
-    def mask_data(self):
-        log("Masking flagged data", 3)
-        for var in self.variables:
-            if "_qual" not in var:
-                idx = self.data[var + "_qual"] > 0
-                self.data[var][idx] = np.nan
 
     def resample_to_fixed_grid(self, products, type):
         bin_size = 0.1
         if "depth" not in products:
-            products["depth"] = {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'longname': 'depth',
+            products["depth"] = {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'long_name': 'depth',
                                  "data": np.arange(1, 50.1, bin_size)}
         if "time" not in products:
             products["time"] = {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                                'longname': 'time', "data": [self.data["time"][0]]}
+                                'long_name': 'time', "data": [self.data["time"][0]]}
         if "wavelength" not in products:
             products["wavelength"] = {'var_name': 'wavelength', 'dim': ('wavelength',), 'unit': 'nm',
-                                      'longname': 'wavelength', "data": np.array(range(303, 907))}
+                                      'long_name': 'wavelength', "data": np.array(range(303, 907))}
 
         if type == "depth":
-            log("Resampling to fixed grid (1m to 50m at 0.1m intervals)", 3)
+            self.log.info("Resampling to fixed grid (1m to 50m at 0.1m intervals)", 3)
+            depth = self.data["depth"]
+            self.log.info("Min depth of profile: " + str(depth.min()) + "m", 4)
+            self.log.info("Max depth of profile: " + str(depth.max()) + "m", 4)
+            grid = products["depth"]["data"]
+            order = np.argsort(depth)
+            depth_sorted = depth[order]
             for var in self.grid:
                 products[var] = self.variables[var]
                 products[var]["dim"] = ('depth', 'time')
-                products[var]["data"] = np.full(products["depth"]["data"].shape, np.nan)
-
-            depth = self.data["depth"]
-            depth_min = depth.min()
-            depth_max = depth.max()
-            log("Min depth of profile: " + str(depth_min) + "m", 4)
-            log("Max depth of profile: " + str(depth_max) + "m", 4)
-            for idx, entry in enumerate(products["depth"]["data"]):
-                if depth_min <= entry <= depth_max:
-                    upper = depth[depth >= entry].min()
-                    lower = depth[depth <= entry].max()
-                    upper_index = np.where(depth == upper)[0][0]
-                    lower_index = np.where(depth == lower)[0][0]
-                    for var in self.grid:
-                        y0 = self.data[var][lower_index]
-                        y1 = self.data[var][upper_index]
-                        x0 = lower
-                        x1 = upper
-                        x = entry
-                        products[var]["data"][idx] = y0 + (x - x0) * (
-                                (y1 - y0) / (x1 - x0))  # Interpolate between upper and lower
+                # Linear interpolation between samples; outside the profile range -> NaN
+                products[var]["data"] = np.interp(grid, depth_sorted, np.asarray(self.data[var])[order],
+                                                  left=np.nan, right=np.nan)
         elif type == "wavelength":
-            log("Resampling to fixed grid (303nm to 907m at 1nm intervals)", 3)
+            self.log.info("Resampling to fixed grid (303nm to 907m at 1nm intervals)", 3)
+            wavelength = self.data["wavelength"]
+            self.log.info("Min wavelength of profile: " + str(wavelength.min()) + "nm", 4)
+            self.log.info("Max wavelength of profile: " + str(wavelength.max()) + "nm", 4)
+            grid = products["wavelength"]["data"]
+            order = np.argsort(wavelength)
+            wavelength_sorted = wavelength[order]
             for var in self.grid:
                 products[var] = self.variables[var]
                 products[var]["dim"] = ('wavelength', 'time')
-                products[var]["data"] = np.full(products["wavelength"]["data"].shape, np.nan)
-
-            wavelength = self.data["wavelength"]
-
-            wavelength_min = wavelength.min()
-            wavelength_max = wavelength.max()
-            log("Min wavelength of profile: " + str(wavelength_min) + "nm", 4)
-            log("Max wavelength of profile: " + str(wavelength_max) + "nm", 4)
-            for idx, entry in enumerate(products["wavelength"]["data"]):
-                if wavelength_min <= entry <= wavelength_max:
-                    upper = wavelength[wavelength >= entry].min()
-                    lower = wavelength[wavelength <= entry].max()
-                    upper_index = np.where(wavelength == upper)[0][0]
-                    lower_index = np.where(wavelength == lower)[0][0]
-                    for var in self.grid:
-                        y0 = self.data[var][lower_index]
-                        y1 = self.data[var][upper_index]
-                        x0 = lower
-                        x1 = upper
-                        x = entry
-                        products[var]["data"][idx] = y0 + (x - x0) * (
-                                (y1 - y0) / (x1 - x0))  # Interpolate between upper and lower
+                # Linear interpolation between samples; outside the measured range -> NaN
+                products[var]["data"] = np.interp(grid, wavelength_sorted, np.asarray(self.data[var])[order],
+                                                  left=np.nan, right=np.nan)
 
         return products
 
@@ -168,7 +103,7 @@ class thetis(object):
             ind = np.where(np.abs(depth_2nd) == depth_2nd_max)[0][0]
             depth_diff = np.diff(self.data["depth"])
             sum_before = sum(depth_diff[0:ind])
-            sum_after = sum(depth_diff[ind:-1])
+            sum_after = sum(depth_diff[ind:])
         else:
             ind = 0
             sum_before = 0
@@ -176,26 +111,10 @@ class thetis(object):
 
         # Conditions more than two profiles
         if sum_before > 0 > sum_after and np.max(self.data["depth"]) >= 30 and ind >= 20:
-            log("File contains more than 1 profile.", 3)
-
-    def quality_flags(self):
-        variables = self.variables.copy().items()
-        for key, values in variables:
-            name = key + "_qual"
-            self.variables[name] = {'var_name': name, 'dim': values["dim"],
-                                    'unit': '0 = nothing to report, 1 = more investigation',
-                                    'longname': name, }
-            qa_data = np.zeros_like(self.data[key])
-            isnt_numeric = np.vectorize(isnt_number, otypes=[bool])
-            qa_data[(isnt_numeric(self.data[key]))] = 1
-            if "min" in values:
-                qa_data[(self.data[key] < float(values["min"]))] = 1
-            if "max" in values:
-                qa_data[(self.data[key] > float(values["max"]))] = 1
-            self.data[name] = np.array(qa_data)
+            self.log.info("File contains more than 1 profile.", 3)
 
 
-class process_grid(thetis):
+class process_grid(Thetis):
     def __init__(self, *args, **kwargs):
         super(process_grid, self).__init__(*args, **kwargs)
 
@@ -208,16 +127,16 @@ class process_grid(thetis):
         }
 
     def radiance_products(self, l2_datasets):
-        log("Creating radiance products", 2)
+        self.log.info("Creating radiance products", 2)
         if "Lu0" in l2_datasets and "Ed0" in l2_datasets:
-            log("Calculating Rrs", 3)
+            self.log.info("Calculating Rrs", 3)
             Rrs = l2_datasets["Lu0"]["data"] / l2_datasets["Ed0"]["data"] * math.pi * 0.544
             l2_datasets["Rrs"] = {'var_name': 'Rrs', 'dim': ('wavelength', 'time'), 'unit': '1/sr',
-                                  'longname': 'Water leaving reflectance', 'data': Rrs}
+                                  'long_name': 'Water leaving reflectance', 'data': Rrs}
         return l2_datasets
 
     def createl2product(self, folder, products):
-        log("Writing L2 data to NetCDF", 2)
+        self.log.info("Writing L2 data to NetCDF", 2)
 
         if not os.path.exists(folder):
             os.makedirs(folder)
@@ -225,7 +144,7 @@ class process_grid(thetis):
         timestamp = products["time"]["data"][0]
         interval = 10
         grid_start = datetime(2018, 1, 1)
-        ts = datetime.utcfromtimestamp(timestamp)
+        ts = datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(tzinfo=None)
         while grid_start < ts - dt.timedelta(days=interval):
             grid_start = grid_start + dt.timedelta(days=interval)
         date_time = grid_start.strftime('%Y%m%d')
@@ -236,48 +155,67 @@ class process_grid(thetis):
 
         if os.path.isfile(filepath):
             nc = netCDF4.Dataset(filepath, mode='a', format='NETCDF4')
-            time = nc.variables['time']
-            if timestamp in time:
-                duplicate = True
-                idx = list(time).index(timestamp)
-            else:
-                duplicate = False
-                idx = position_in_array(time[:], timestamp)
-                time[:] = np.insert(time[:], idx, timestamp)
 
-            for product in products:
+            def get_var(product):
                 if product in nc.variables:
-                    var = nc.variables[product]
-                else:
-                    var = nc.createVariable(products[product]["var_name"], np.float64, products[product]["dim"],
-                                            fill_value=np.nan)
-                    var.units = products[product]["unit"]
-                    var.long_name = products[product]["longname"]
+                    return nc.variables[product]
+                var = nc.createVariable(products[product]["var_name"], np.float64, products[product]["dim"],
+                                        fill_value=np.nan, zlib=True, complevel=4)
+                var.units = products[product]["unit"]
+                var.long_name = products[product]["long_name"]
+                return var
 
-                if product != "depth" and product != "time" and product != "wavelength":
-                    if duplicate and np.all(np.isnan(np.array(var[:, idx]))):
-                        var[:, idx] = products[product]["data"]
-                    else:
-                        end = len(var[:][0]) - 1
-                        if idx != end:
-                            var[:, end] = products[product]["data"]
-                            var[:] = var[:, np.insert(np.arange(end), idx, end)]  # Re-arrange columns
-                        else:
-                            var[:, idx] = products[product]["data"]
+            # depth/wavelength are fixed grid axes that do not change between profiles.
+            data_products = [p for p in products if p not in ("depth", "time", "wavelength")]
+            existing_time = np.array(nc.variables['time'][:], dtype=float)
+
+            if timestamp in existing_time:
+                # Reprocessing an already-present profile: merge into its own column,
+                # preferring new (non-NaN) values. Result does not depend on whether or
+                # when the profile was written before.
+                idx = int(np.where(existing_time == timestamp)[0][0])
+                for product in data_products:
+                    var = get_var(product)
+                    existing_col = np.array(var[:, idx], dtype=float)
+                    new_col = np.asarray(products[product]["data"], dtype=float)
+                    var[:, idx] = np.where(np.isnan(new_col), existing_col, new_col)
+            else:
+                # New profile: append it, then sort the entire time axis so the file is
+                # always time-ordered with every variable column-aligned to its time,
+                # independent of the order profiles are processed in.
+                new_time = np.append(existing_time, timestamp)
+                order = np.argsort(new_time, kind="stable")
+                # Snapshot existing columns BEFORE the unlimited time dimension grows.
+                snapshots = {p: np.array(get_var(p)[:], dtype=float) for p in data_products}
+                nc.variables['time'][:] = new_time[order]
+                for product in data_products:
+                    existing = snapshots[product]  # (space, N), newly created vars are all-NaN
+                    new_col = np.asarray(products[product]["data"], dtype=float).reshape(existing.shape[0], 1)
+                    combined = np.concatenate([existing, new_col], axis=1)  # columns: [existing..., new]
+                    nc.variables[product][:] = combined[:, order]
+
+            nc.close()
+            self.log.info("Successfully updated NetCDF file", 3)
 
         else:
             nc = netCDF4.Dataset(filepath, mode='w', format='NETCDF4')
             for key in self.general_attributes:
                 setattr(nc, key, self.general_attributes[key])
 
+            # Only the time axis grows as profiles are appended; depth and
+            # wavelength are fixed grid axes. Sizing them explicitly (instead of
+            # leaving every dimension unlimited) lets HDF5 pick sane chunk shapes
+            # and avoids massive file-size bloat from oversized default chunks.
             for key, values in self.dimensions.items():
-                nc.createDimension(values['dim_name'], values['dim_size'])
+                dim_name = values['dim_name']
+                dim_size = None if dim_name == 'time' else len(np.atleast_1d(products[dim_name]["data"]))
+                nc.createDimension(dim_name, dim_size)
 
             for product in products:
                 var = nc.createVariable(products[product]["var_name"], np.float64, products[product]["dim"],
-                                        fill_value=np.nan)
+                                        fill_value=np.nan, zlib=True, complevel=4)
                 var.units = products[product]["unit"]
-                var.long_name = products[product]["longname"]
+                var.long_name = products[product]["long_name"]
                 if product == "time":
                     var[0] = products[product]["data"]
                 elif len(products[product]["dim"]) == 1:
@@ -287,32 +225,29 @@ class process_grid(thetis):
 
             # Close NetCDF file
             nc.close()
-            log("Successfully wrote NetCDF file", 3)
+            self.log.info("Successfully wrote NetCDF file", 3)
 
 
-class process_CTD(thetis):
+class CTD(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_CTD, self).__init__(*args, **kwargs)
+        super(CTD, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis CTD"
 
         self.dimensions = {
             'time': {'dim_name': 'time', 'dim_size': None}
         }
+
         self.variables = {
-            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'cond': {'var_name': 'cond', 'dim': ('time',), 'unit': 'microS/cm', 'longname': 'conductivity', "min": 0,
-                     "max": 500},
-            'temp': {'var_name': 'temp', 'dim': ('time',), 'unit': 'degC', 'longname': 'temperature', "min": 2,
-                     "max": 40},
-            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'longname': 'pressure', "min": 0,
-                      "max": 150},
-            'sal': {'var_name': 'sal', 'dim': ('time',), 'unit': 'mg/l', 'longname': 'salinity'},
-            'cond20': {'var_name': 'cond20', 'dim': ('time',), 'unit': 'microS/cm',
-                       'longname': 'conductivity normalised at 20degC', "min": 0, "max": 500},
-            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100}
+            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00', 'long_name': 'time'},
+            'cond': {'var_name': 'cond', 'dim': ('time',), 'unit': 'microS/cm', 'long_name': 'conductivity'},
+            'temp': {'var_name': 'temp', 'dim': ('time',), 'unit': 'degC', 'long_name': 'temperature'},
+            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'long_name': 'pressure'},
+            'sal': {'var_name': 'sal', 'dim': ('time',), 'unit': 'mg/l', 'long_name': 'salinity'},
+            'cond20': {'var_name': 'cond20', 'dim': ('time',), 'unit': 'microS/cm', 'long_name': 'conductivity normalised at 20degC'},
+            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'long_name': 'depth'}
         }
+
         self.offset = 0
         self.type = "CTD"
         self.grid = ["cond", "temp", "sal", "cond20"]
@@ -325,13 +260,13 @@ class process_CTD(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_PPD_CTD.txt")):
             file = os.path.join(folder, str(id) + "_PPD_CTD.txt")
         else:
-            log("Cannot find CTD file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find CTD file for id: " + id + " in folder: " + folder, 0)
             return False
-        log("Reading CTD data from: " + file, 3)
+        self.log.info("Reading CTD data from: " + file, 0)
         try:
             df = pd.read_csv(file, sep="\t", header=5)
             if len(df) < 10:
-                log("No data for profile.", 3)
+                self.log.warning("No data for profile.", 1)
                 return False
             for column in ["Date (dd/mm/yy)", "Time (hh:mm:ss.sss)"]:
                 if column in df.columns:
@@ -349,37 +284,35 @@ class process_CTD(thetis):
 
             for variable in self.variables:
                 self.data[variable] = np.array(df[variable])
-            log("Successfully read data", 3)
-        except:
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 1)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data", 1)
             return False
         return True
 
 
-class process_DO(thetis):
+class DO(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_DO, self).__init__(*args, **kwargs)
+        super(DO, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis Dissolved Oxygen"
 
         self.dimensions = {
             'time': {'dim_name': 'time', 'dim_size': None}
         }
+
         self.variables = {
             'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'do': {'var_name': 'do', 'dim': ('time',), 'unit': 'mg/L', 'longname': 'dissolvedoxygen', "min": 0,
-                   "max": 20},
-            'temp': {'var_name': 'temp', 'dim': ('time',), 'unit': 'degC', 'longname': 'temperature', "min": 2,
-                     "max": 40},
-            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'longname': 'pressure', "min": 0,
-                      "max": 100},
-            'do_at_sat': {'var_name': 'do_at_sat', 'dim': ('time',), 'unit': 'mg/L', 'longname': 'oxygensaturation',
-                          "min": 0, "max": 20},
-            'dosat': {'var_name': 'dosat', 'dim': ('time',), 'unit': '%sat',
-                      'longname': 'oxygen relative to saturation', "min": 0, "max": 300},
-            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100}
+                     'long_name': 'time'},
+            'do': {'var_name': 'do', 'dim': ('time',), 'unit': 'mg/L', 'long_name': 'dissolvedoxygen'},
+            'temp': {'var_name': 'temp', 'dim': ('time',), 'unit': 'degC', 'long_name': 'temperature'},
+            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'long_name': 'pressure'},
+            'do_at_sat': {'var_name': 'do_at_sat', 'dim': ('time',), 'unit': 'mg/L', 'long_name': 'oxygensaturation'},
+            'dosat': {'var_name': 'dosat', 'dim': ('time',), 'unit': '%sat', 'long_name': 'oxygen relative to saturation'},
+            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'long_name': 'depth'}
         }
+
         self.offset = 0.1
         self.type = "DO"
         self.grid = ["do", "dosat"]
@@ -392,21 +325,19 @@ class process_DO(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_PPD_DO.txt")):
             file = os.path.join(folder, str(id) + "_PPD_DO.txt")
         else:
-            log("Cannot find DO file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find DO file for id: " + id + " in folder: " + folder, 0)
             return False
-        log("Reading DO data from: " + file, 3)
+        self.log.info("Reading DO data from: " + file, 0)
         try:
             df = pd.read_csv(file, sep="\t", header=5)
 
             if len(df) < 10:
-                log("No data for profile.", 3)
+                self.log.warning("No data for profile.", 1)
                 return False
-            df[['raw_phase_delay', 'raw_thermistor_voltage', 'DO', 'Temperature']] = df['Data'].str.split(',',
-                                                                                                          expand=True)
+            df[['raw_phase_delay', 'raw_thermistor_voltage', 'DO', 'Temperature']] = df['Data'].str.split(',', expand=True)
             df = df.drop(['Data', 'raw_phase_delay', 'raw_thermistor_voltage'], axis=1)
             df[['DO', 'Temperature']] = df[['DO', 'Temperature']].apply(pd.to_numeric, errors='coerce', axis=1)
-            df.rename(columns={'Timestamp (s)': 'time', "DO": "do", "Depth (dbar)": "press", "Temperature": "temp"},
-                      inplace=True)
+            df.rename(columns={'Timestamp (s)': 'time', "DO": "do", "Depth (dbar)": "press", "Temperature": "temp"}, inplace=True)
             dt = "Depth Timestamp (s)"
             if dt not in df.columns:
                 dt = "time"
@@ -418,32 +349,31 @@ class process_DO(thetis):
 
             for variable in self.variables:
                 self.data[variable] = np.array(df[variable])
-            log("Successfully read data", 3)
-        except:
-            print(sys.exc_info())
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 1)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data")
             return False
         return True
 
 
-class process_PAR(thetis):
+class PAR(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_PAR, self).__init__(*args, **kwargs)
+        super(PAR, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis Photosynthetically Active Radiation"
 
         self.dimensions = {
             'time': {'dim_name': 'time', 'dim_size': None}
         }
+
         self.variables = {
-            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'longname': 'pressure', "min": 0,
-                      "max": 150},
-            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100},
-            'par': {'var_name': 'par', 'dim': ('time',), 'unit': 'μmol/m²/s',
-                    'longname': 'photosynthetically active radiation', "min": 0, "max": 10000},
+            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00', 'long_name': 'time'},
+            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'long_name': 'pressure'},
+            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'long_name': 'depth'},
+            'par': {'var_name': 'par', 'dim': ('time',), 'unit': 'μmol/m²/s', 'long_name': 'photosynthetically active radiation'},
         }
+
         self.offset = -0.35
         self.type = "PAR"
         self.grid = ["par"]
@@ -456,9 +386,9 @@ class process_PAR(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_PPD_PARS.txt")):
             file = os.path.join(folder, str(id) + "_PPD_PARS.txt")
         else:
-            log("Cannot find PAR file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find PAR file for id: " + id + " in folder: " + folder, 0)
             return False
-        log("Reading PAR data from: " + file, 3)
+        self.log.info("Reading PAR data from: " + file, 0)
         types = [
             "TimestampsDateddmmyyDepthdbarData",
             "TimestampsDepthdbarDepthTimestampsData",
@@ -474,7 +404,7 @@ class process_PAR(thetis):
                         if re.sub(r'[^A-Za-z]', '', line) in types:
                             type = types.index(re.sub(r'[^A-Za-z]', '', line))
                         else:
-                            log("Unrecognised file type format: " + file)
+                            self.log.info("Unrecognised file type format: " + file, 1)
                             return False
                     if 'mvs 1' in line:
                         index_begin = idx + 1
@@ -488,7 +418,7 @@ class process_PAR(thetis):
             df = pd.read_csv(file, sep="\t", skiprows=index_skip, header=None)
 
             if len(df) < 10:
-                log("No data for profile.", 3)
+                self.log.warning("No data for profile.", 1)
                 return False
 
             if type == 0:
@@ -505,36 +435,33 @@ class process_PAR(thetis):
 
             for variable in self.variables:
                 self.data[variable] = np.array(df[variable])
-            log("Successfully read data", 3)
-        except:
-            print(sys.exc_info())
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 3)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data", 1)
             return False
         return True
 
 
-class process_TRIP1(thetis):
+class TRIP1(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_TRIP1, self).__init__(*args, **kwargs)
+        super(TRIP1, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis TRIP1"
 
         self.dimensions = {
             'time': {'dim_name': 'time', 'dim_size': None}
         }
+
         self.variables = {
-            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'longname': 'pressure', "min": 0,
-                      "max": 100},
-            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100},
-            'bb440': {'var_name': 'bb440', 'dim': ('time',), 'unit': 'm-1', 'longname': 'backscattering at 440 nm',
-                      "min": 0, "max": 0.5},
-            'bb532': {'var_name': 'bb532', 'dim': ('time',), 'unit': 'm-1', 'longname': 'backscattering at 532 nm',
-                      "min": 0, "max": 0.5},
-            'bb630': {'var_name': 'bb630', 'dim': ('time',), 'unit': 'm-1', 'longname': 'backscattering at 630 nm',
-                      "min": 0, "max": 0.5},
+            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00', 'long_name': 'time'},
+            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'long_name': 'pressure'},
+            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'long_name': 'depth'},
+            'bb440': {'var_name': 'bb440', 'dim': ('time',), 'unit': 'm-1', 'long_name': 'backscattering at 440 nm'},
+            'bb532': {'var_name': 'bb532', 'dim': ('time',), 'unit': 'm-1', 'long_name': 'backscattering at 532 nm'},
+            'bb630': {'var_name': 'bb630', 'dim': ('time',), 'unit': 'm-1', 'long_name': 'backscattering at 630 nm'},
         }
+
         self.offset = 0.069
         self.type = "TRIP1"
         self.grid = ["bb440", "bb532", "bb630"]
@@ -547,9 +474,9 @@ class process_TRIP1(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_PPD_TRIP1.txt")):
             file = os.path.join(folder, str(id) + "_PPD_TRIP1.txt")
         else:
-            log("Cannot find TRIP1 file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find TRIP1 file for id: " + id + " in folder: " + folder, 0)
             return False
-        log("Reading TRIP1 data from: " + file, 3)
+        self.log.info("Reading TRIP1 data from: " + file, 0)
 
         types = [
             "TimestampsDateddmmyyDepthdbarData",
@@ -566,7 +493,7 @@ class process_TRIP1(thetis):
                         if re.sub(r'[^A-Za-z]', '', line) in types:
                             type = types.index(re.sub(r'[^A-Za-z]', '', line))
                         else:
-                            log("Unrecognised file type format: " + file)
+                            self.log.warning("Unrecognised file type format: " + file, 1)
                             return False
                     if len(line.split("\t")) >= 12 and index_begin == 0:
                         index_begin = idx
@@ -580,7 +507,7 @@ class process_TRIP1(thetis):
             df = pd.read_csv(file, sep="\t", skiprows=index_skip, header=None)
 
             if len(df) < 10:
-                log("No data for profile.", 3)
+                self.log.warning("No data for profile.", 1)
                 return False
 
             if type == 0:
@@ -593,8 +520,7 @@ class process_TRIP1(thetis):
                 df.columns = ["time", "Date", "Time", 'press', 'date_extract', 'time_extract',
                               'channel_1', 'bb440', 'channel_2', 'bb532', 'channel_3', 'bb630', "something"]
 
-            df[['bb440', 'bb532', 'bb630']] = df[['bb440', 'bb532', 'bb630']].apply(pd.to_numeric, errors='coerce',
-                                                                                    axis=1)
+            df[['bb440', 'bb532', 'bb630']] = df[['bb440', 'bb532', 'bb630']].apply(pd.to_numeric, errors='coerce', axis=1)
 
             df = df[df['bb630'].notna()]
             depth = []
@@ -613,7 +539,7 @@ class process_TRIP1(thetis):
                 c2_b532 = 1.438E-04
                 c1_b630 = 8.717E-05
                 c2_b630 = 8.630E-05
-                mean_timestep = df["time"].sort_values().mean()
+                mean_timestep = df["time"].mean()
                 b440_coeff = (c2_b440 - c1_b440) / (d2 - d1) * mean_timestep + c1_b440 - (c2_b440 - c1_b440) / (
                         d2 - d1) * d1
                 b532_coeff = (c2_b532 - c1_b532) / (d2 - d1) * mean_timestep + c1_b532 - (c2_b532 - c1_b532) / (
@@ -647,36 +573,33 @@ class process_TRIP1(thetis):
 
             for variable in self.variables:
                 self.data[variable] = np.array(df[variable])
-            log("Successfully read data", 3)
-        except:
-            print(sys.exc_info())
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 1)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data", 1)
             return False
         return True
 
 
-class process_TRIP2(thetis):
+class TRIP2(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_TRIP2, self).__init__(*args, **kwargs)
+        super(TRIP2, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis TRIP2"
 
         self.dimensions = {
             'time': {'dim_name': 'time', 'dim_size': None}
         }
+
         self.variables = {
-            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'longname': 'pressure', "min": 0,
-                      "max": 100},
-            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100},
-            'bb700': {'var_name': 'bb700', 'dim': ('time',), 'unit': 'm-1', 'longname': 'backscattering at 700 nm',
-                      "min": 0, "max": 0.5},
-            'chla': {'var_name': 'chla', 'dim': ('time',), 'unit': 'μg/L', 'longname': 'Chlorophyll a', "min": 0,
-                     "max": 100},
-            'cdom': {'var_name': 'cdom', 'dim': ('time',), 'unit': 'ppb',
-                     'longname': 'Chloromorphic Dissolved Organic Matter', "min": 0, "max": 100},
+            'time': {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00', 'long_name': 'time'},
+            'press': {'var_name': 'press', 'dim': ('time',), 'unit': 'dbar', 'long_name': 'pressure'},
+            'depth': {'var_name': 'depth', 'dim': ('time',), 'unit': 'm', 'long_name': 'depth'},
+            'bb700': {'var_name': 'bb700', 'dim': ('time',), 'unit': 'm-1', 'long_name': 'backscattering at 700 nm'},
+            'chla': {'var_name': 'chla', 'dim': ('time',), 'unit': 'μg/L', 'long_name': 'Chlorophyll a'},
+            'cdom': {'var_name': 'cdom', 'dim': ('time',), 'unit': 'ppb', 'long_name': 'Chloromorphic Dissolved Organic Matter'},
         }
+
         self.offset = 0.069
         self.type = "TRIP2"
         self.grid = ["bb700", "chla", "cdom"]
@@ -689,9 +612,9 @@ class process_TRIP2(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_PPD_TRIP2.txt")):
             file = os.path.join(folder, str(id) + "_PPD_TRIP2.txt")
         else:
-            log("Cannot find TRIP2 file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find TRIP2 file for id: " + id + " in folder: " + folder, 0)
             return False
-        log("Reading TRIP2 data from: " + file, 3)
+        self.log.info("Reading TRIP2 data from: " + file, 0)
 
         types = [
             "TimestampsDateddmmyyDepthdbarData",
@@ -708,7 +631,7 @@ class process_TRIP2(thetis):
                         if re.sub(r'[^A-Za-z]', '', line) in types:
                             type = types.index(re.sub(r'[^A-Za-z]', '', line))
                         else:
-                            log("Unrecognised file type format: " + file)
+                            self.log.warning("Unrecognised file type format: " + file, 1)
                             return False
                     if len(line.split("\t")) >= 12 and index_begin == 0:
                         index_begin = idx
@@ -722,7 +645,7 @@ class process_TRIP2(thetis):
             df = pd.read_csv(file, sep="\t", skiprows=index_skip, header=None)
 
             if len(df) < 10:
-                log("No data for profile.", 3)
+                self.log.warning("No data for profile.", 1)
                 return False
 
             elif type == 0:
@@ -747,7 +670,7 @@ class process_TRIP2(thetis):
             # get calibration coefficients
             if df["time"].values[1] < 1593561600:  # corresponds to "2020-07-01 UTC"
                 # Linear interpolation to account for gradual shift in calibration coeffs
-                mean_timestep = df["time"].sort_values().mean()
+                mean_timestep = df["time"].mean()
                 d2 = 1592172000  # "2020-06-15 UTC"
                 d1 = 1538344800  # "2018-10-01 UTC"
 
@@ -788,17 +711,17 @@ class process_TRIP2(thetis):
 
             for variable in self.variables:
                 self.data[variable] = np.array(df[variable])
-            log("Successfully read data", 3)
-        except:
-            print(sys.exc_info())
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 1)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data", 1)
             return False
         return True
 
 
-class process_ACS(thetis):
+class ACS(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_ACS, self).__init__(*args, **kwargs)
+        super(ACS, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis ACS"
 
@@ -806,28 +729,21 @@ class process_ACS(thetis):
             'depth': {'dim_name': 'depth', 'dim_size': None},
             'wavelength': {'dim_name': 'wavelength', 'dim_size': None}
         }
+
         self.variables = {
-            'time': {'var_name': 'time', 'dim': ('depth',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'wavelength': {'var_name': 'wavelength', 'dim': ('wavelength',), 'unit': 'nm', 'longname': 'wavelength'},
-            'depth': {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100},
-            'a': {'var_name': 'a', 'dim': ('depth', 'wavelength'), 'unit': 'm-1',
-                  'longname': 'Hyperspectral absorption', "min": 0, "max": 3},
-            'b': {'var_name': 'b', 'dim': ('depth', 'wavelength'), 'unit': 'm-1',
-                  'longname': 'Hyperspectral scattering', "min": 0, "max": 20},
-            'c': {'var_name': 'c', 'dim': ('depth', 'wavelength'), 'unit': 'm-1',
-                  'longname': 'Hyperspectral attenuation', "min": 0, "max": 20},
-            'a700': {'var_name': 'a700', 'dim': ('depth',), 'unit': 'm-1',
-                     'longname': 'Hyperspectral absorption at 700nm', "min": 0, "max": 3},
-            'b700': {'var_name': 'b700', 'dim': ('depth',), 'unit': 'm-1',
-                     'longname': 'Hyperspectral scattering at 700nm', "min": 0, "max": 20},
-            'c700': {'var_name': 'c700', 'dim': ('depth',), 'unit': 'm-1',
-                     'longname': 'Hyperspectral attenuation at 700nm', "min": 0, "max": 20},
-            'aLH676': {'var_name': 'aLH676', 'dim': ('depth',), 'unit': 'm-1',
-                       'longname': 'Absorption line height at 676 nm', "min": 0, "max": 5},
-            'Sk': {'var_name': 'Sk', 'dim': ('depth',), 'unit': 'm-1',
-                   'longname': 'Spectral attenuation slope', "min": 0, "max": 5},
+            'time': {'var_name': 'time', 'dim': ('depth',), 'unit': 'seconds since 1970-01-01 00:00:00', 'long_name': 'time'},
+            'wavelength': {'var_name': 'wavelength', 'dim': ('wavelength',), 'unit': 'nm', 'long_name': 'wavelength'},
+            'depth': {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'long_name': 'depth'},
+            'a': {'var_name': 'a', 'dim': ('depth', 'wavelength'), 'unit': 'm-1', 'long_name': 'Hyperspectral absorption'},
+            'b': {'var_name': 'b', 'dim': ('depth', 'wavelength'), 'unit': 'm-1', 'long_name': 'Hyperspectral scattering'},
+            'c': {'var_name': 'c', 'dim': ('depth', 'wavelength'), 'unit': 'm-1', 'long_name': 'Hyperspectral attenuation'},
+            'a700': {'var_name': 'a700', 'dim': ('depth',), 'unit': 'm-1', 'long_name': 'Hyperspectral absorption at 700nm'},
+            'b700': {'var_name': 'b700', 'dim': ('depth',), 'unit': 'm-1', 'long_name': 'Hyperspectral scattering at 700nm'},
+            'c700': {'var_name': 'c700', 'dim': ('depth',), 'unit': 'm-1', 'long_name': 'Hyperspectral attenuation at 700nm'},
+            'aLH676': {'var_name': 'aLH676', 'dim': ('depth',), 'unit': 'm-1', 'long_name': 'Absorption line height at 676 nm'},
+            'Sk': {'var_name': 'Sk', 'dim': ('depth',), 'unit': 'm-1', 'long_name': 'Spectral attenuation slope'},
         }
+
         self.offset = 0.22
         self.type = "ACS"
         self.grid = ["a700", "b700", "c700", "aLH676", "Sk"]
@@ -849,23 +765,23 @@ class process_ACS(thetis):
                                                        header=[0, 1])
                                 read = True
                         if not read:
-                            log("Failed to find calibration files for time: " + str(time), 3)
+                            self.log.warning("Failed to find calibration files for time: " + str(time), 1)
                             return False
-                        log("Successfully read calibration files", 3)
+                        self.log.info("Successfully read calibration files", 1)
                         return {"tcal": tcal, "ical": ical, "t_bins": t_bins,
                                 "landa_C": landa_C, "landa_A": landa_A, "C0": C0, "A0": A0,
                                 "C_corr": C_corr, "A_corr": A_corr,
                                 "tab_Corr": tab_Corr}
-                    except:
-                        print(print(sys.exc_info()))
-                        log("Failed to load calibration files for ACS", 3)
+                    except Exception as e:
+                        print(e)
+                        self.log.warning("Failed to load calibration files for ACS", 1)
                         return False
             else:
-                log("Cannot find calibration master file calibration.json for ACS", 3)
+                self.log.warning("Cannot find calibration master file calibration.json for ACS", 1)
                 return False
 
         else:
-            log("Cannot find calibration files for ACS", 3)
+            self.log.warning("Cannot find calibration files for ACS", 0)
             return False
 
     def read_data(self, id, folder, calibration_dir, ctd, bin=0.125):
@@ -876,13 +792,13 @@ class process_ACS(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_ACD_ACS.txt")):
             file = os.path.join(folder, str(id) + "_ACD_ACS.txt")
         else:
-            log("Cannot find ACS file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find ACS file for id: " + id + " in folder: " + folder, 0)
             return False
         time = ctd["time"][0]
         calibration = self.read_calibration_data(calibration_dir, time)
         if calibration == False:
             return False
-        log("Reading ACS data from: " + file, 3)
+        self.log.info("Reading ACS data from: " + file, 0)
 
         try:
             with open(file) as f:
@@ -894,7 +810,7 @@ class process_ACS(thetis):
                         index_begin = idx
                         break
 
-            df = pd.read_csv(file, sep="\t", skiprows=index_begin, header=None, error_bad_lines=False, engine="python")
+            df = pd.read_csv(file, sep="\t", skiprows=index_begin, header=None, on_bad_lines="skip", low_memory=False)
             df.dropna(subset=[4], inplace=True)
 
             df["depth"] = np.interp(np.array(df[0]), ctd["time"], ctd["depth"]) + self.offset
@@ -959,28 +875,6 @@ class process_ACS(thetis):
 
             self.data["wavelength"] = landa_A
 
-
-
-            ### smooth A and C vertically
-            """
-            df_A = pd.DataFrame(np.array(mat_A), index=depth, columns=landa_A)
-            df_C = pd.DataFrame(np.array(mat_C), index=depth, columns=landa_C)
-            df_A = smooth_acs_vertically(df_A)
-            df_C = smooth_acs_vertically(df_C)
-            mat_A = df_A.to_numpy()
-            mat_C = df_C.to_numpy()
-            mat_B = mat_C - mat_A
-            """
-
-            # Binning option
-            """
-            self.data["depth"] = np.arange(2, 50, bin)
-            self.data["a"] = bin_array(mat_A, depth, self.data["depth"])
-            self.data["b"] = bin_array(mat_B, depth, self.data["depth"])
-            self.data["c"] = bin_array(mat_C, depth, self.data["depth"])
-            self.data["time"] = bin_array(time, depth, self.data["depth"])
-            """
-
             # Not binning
             self.data["depth"] = depth
             self.data["a"] = mat_A
@@ -997,30 +891,23 @@ class process_ACS(thetis):
             self.data["Sk"] = spectral_attenuation_slope(landa_C, self.data["c"])
 
             if len(time) < 20:
-                log("Erroneous profile", 3)
+                self.log.warning("Erroneous profile", 1)
                 return False
 
-            log("Successfully read data", 3)
-        except:
-            print(sys.exc_info())
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 1)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data", 1)
             return False
         return True
 
-    def quality_flags(self):
+    def custom_quality_flags(self):
         variables = self.variables.copy().items()
         for key, values in variables:
             name = key + "_qual"
-            self.variables[name] = {'var_name': name, 'dim': values["dim"],
-                                    'unit': '0 = nothing to report, 1 = more investigation',
-                                    'longname': name, }
-            qa_data = np.zeros_like(self.data[key])
-            isnt_numeric = np.vectorize(isnt_number, otypes=[bool])
-            qa_data[(isnt_numeric(self.data[key]))] = 1
-            if "min" in values:
-                qa_data[(self.data[key] < float(values["min"]))] = 1
-            if "max" in values:
-                qa_data[(self.data[key] > float(values["max"]))] = 1
+            if name not in self.data:
+                continue
+            qa_data = self.data[name]
 
             if key in ["a", "b", "c", "a700", "b700", "c700", "aLH676", "Sk"]:
                 qa_data[despike(self.data[key], prominence=1)] = 1
@@ -1028,9 +915,9 @@ class process_ACS(thetis):
             self.data[name] = np.array(qa_data)
 
 
-class process_OCR1(thetis):
+class OCR1(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_OCR1, self).__init__(*args, **kwargs)
+        super(OCR1, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis OCR1"
 
@@ -1038,18 +925,16 @@ class process_OCR1(thetis):
             'depth': {'dim_name': 'depth', 'dim_size': None},
             'wavelength': {'dim_name': 'wavelength', 'dim_size': None}
         }
+
         self.variables = {
-            'time': {'var_name': 'time', 'dim': ('depth',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'wavelength': {'var_name': 'wavelength', 'dim': ('wavelength',), 'unit': 'nm', 'longname': 'wavelength'},
-            'depth': {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100},
-            'Ed': {'var_name': 'Ed', 'dim': ('depth', 'wavelength'), 'unit': 'μW cm-2 nm-1',
-                   'longname': 'Hyperspectral downwelling irradiance', "min": 0, "max": 200},
-            'Ed0': {'var_name': 'Ed0', 'dim': ('wavelength',), 'unit': 'μW cm-2 nm-1',
-                    'longname': 'Surface hyperspectral downwelling irradiance', "min": 0, "max": 200},
-            'kd_Ed': {'var_name': 'kd_Ed', 'dim': ('wavelength',), 'unit': 'm-1',
-                      'longname': 'Spectral light attenuation coefficient', "min": 0, "max": 1},
+            'time': {'var_name': 'time', 'dim': ('depth',), 'unit': 'seconds since 1970-01-01 00:00:00', 'long_name': 'time'},
+            'wavelength': {'var_name': 'wavelength', 'dim': ('wavelength',), 'unit': 'nm', 'long_name': 'wavelength'},
+            'depth': {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'long_name': 'depth'},
+            'Ed': {'var_name': 'Ed', 'dim': ('depth', 'wavelength'), 'unit': 'μW cm-2 nm-1', 'long_name': 'Hyperspectral downwelling irradiance'},
+            'Ed0': {'var_name': 'Ed0', 'dim': ('wavelength',), 'unit': 'μW cm-2 nm-1', 'long_name': 'Surface hyperspectral downwelling irradiance'},
+            'kd_Ed': {'var_name': 'kd_Ed', 'dim': ('wavelength',), 'unit': 'm-1', 'long_name': 'Spectral light attenuation coefficient'},
         }
+
         self.offset = -0.15
         self.type = "OCR1"
         self.grid = ["Ed0", "kd_Ed"]
@@ -1063,28 +948,30 @@ class process_OCR1(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_PPD_OCR1.txt")):
             file = os.path.join(folder, str(id) + "_PPD_OCR1.txt")
         else:
-            log("Cannot find OCR file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find OCR file for id: " + id + " in folder: " + folder, 0)
             return False
 
-        log("Reading OCR data from: " + file, 3)
+        self.log.info("Reading OCR data from: " + file, 0)
 
         try:
             # Process OCR1
-            with open(file) as f:
+            with open(file, encoding="ISO-8859-1") as f:
                 index_begin = 0
                 for idx, line in enumerate(f):
                     if len(line.split("\t")) > 100:
                         index_begin = idx
                         break
-            df = pd.read_csv(file, sep="\t+|\t+\t+", skiprows=index_begin, engine='python')
+            df = pd.read_csv(file, sep="\t+|\t+\t+", skiprows=index_begin, engine='python', encoding="ISO-8859-1", on_bad_lines="skip")
             df = df[df.isnull().sum(axis=1) < 20]
+            df["Timestamp (s)"] = pd.to_numeric(df["Timestamp (s)"], errors="coerce")
+            df = df.dropna(subset=["Timestamp (s)"])
             df["depth"] = np.interp(np.array(df["Timestamp (s)"]), ctd["time"], ctd["depth"]) + self.offset
 
             timestamp = np.array(df["Timestamp (s)"])
             depth = np.interp(timestamp, ctd["time"], ctd["depth"]) + self.offset
-            OCR = np.array(df.loc[:, "Chan 1":"Chan 180"])
-            int_time = np.array(df["Integration Time"]) / 1000
-            dark_ave = np.array(df["Dark Ave"])
+            OCR = df.loc[:, "Chan 1":"Chan 180"].apply(pd.to_numeric, errors="coerce").to_numpy()
+            int_time = pd.to_numeric(df["Integration Time"], errors="coerce").to_numpy() / 1000
+            dark_ave = pd.to_numeric(df["Dark Ave"], errors="coerce").to_numpy()
             header = np.array(df["Header"])
 
             OCR = (OCR.transpose() - dark_ave).transpose()
@@ -1132,8 +1019,7 @@ class process_OCR1(thetis):
             # Calculate kd_ed
             kd_ed = np.array([np.nan] * len(landa_HPE))
             if np.nanmax(Ed) > 0:
-                kd_ed = spectral_light_attenuation_coefficient(landa_HPE, Ed, depth, self.variables["kd_Ed"]["min"],
-                                                               self.variables["kd_Ed"]["max"])
+                kd_ed = spectral_light_attenuation_coefficient(landa_HPE, Ed, depth, 0, 1)
 
             self.data["time"] = time
             self.data["wavelength"] = landa_HPE
@@ -1143,20 +1029,20 @@ class process_OCR1(thetis):
             self.data["kd_Ed"] = kd_ed
 
             if len(time) < 20:
-                log("Erroneous profile", 3)
+                self.log.warning("Erroneous profile", 1)
                 return False
 
-            log("Successfully read data", 3)
-        except:
-            print(sys.exc_info())
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 1)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data", 1)
             return False
         return True
 
 
-class process_OCR2(thetis):
+class OCR2(Thetis):
     def __init__(self, *args, **kwargs):
-        super(process_OCR2, self).__init__(*args, **kwargs)
+        super(OCR2, self).__init__(*args, **kwargs)
 
         self.general_attributes["title"] = "Lexplore Thetis OCR2"
 
@@ -1164,17 +1050,15 @@ class process_OCR2(thetis):
             'depth': {'dim_name': 'depth', 'dim_size': None},
             'wavelength': {'dim_name': 'wavelength', 'dim_size': None}
         }
-        self.variables = {
-            'time': {'var_name': 'time', 'dim': ('depth',), 'unit': 'seconds since 1970-01-01 00:00:00',
-                     'longname': 'time', "min": 1514764800, "max": datetime.now().timestamp()},
-            'wavelength': {'var_name': 'wavelength', 'dim': ('wavelength',), 'unit': 'nm', 'longname': 'wavelength'},
-            'depth': {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'longname': 'depth', "min": 0, "max": 100},
-            'Lu': {'var_name': 'Lu', 'dim': ('depth', 'wavelength'), 'unit': 'μW cm-2 nm-1 sr-1',
-                   'longname': 'Hyperspectral upwelling radiance', "min": 0, "max": 5},
-            'Lu0': {'var_name': 'Lu0', 'dim': ('wavelength',), 'unit': 'μW cm-2 nm-1 sr-1',
-                    'longname': 'Surface hyperspectral upwelling radiance', "min": 0, "max": 5},
 
+        self.variables = {
+            'time': {'var_name': 'time', 'dim': ('depth',), 'unit': 'seconds since 1970-01-01 00:00:00', 'long_name': 'time'},
+            'wavelength': {'var_name': 'wavelength', 'dim': ('wavelength',), 'unit': 'nm', 'long_name': 'wavelength'},
+            'depth': {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'long_name': 'depth'},
+            'Lu': {'var_name': 'Lu', 'dim': ('depth', 'wavelength'), 'unit': 'μW cm-2 nm-1 sr-1', 'long_name': 'Hyperspectral upwelling radiance'},
+            'Lu0': {'var_name': 'Lu0', 'dim': ('wavelength',), 'unit': 'μW cm-2 nm-1 sr-1', 'long_name': 'Surface hyperspectral upwelling radiance'},
         }
+
         self.offset = -0.15
         self.type = "OCR2"
         self.grid = ["Lu0"]
@@ -1188,10 +1072,10 @@ class process_OCR2(thetis):
         elif os.path.isfile(os.path.join(folder, str(id) + "_PPD_OCR2.txt")):
             file = os.path.join(folder, str(id) + "_PPD_OCR2.txt")
         else:
-            log("Cannot find OCR file for id: " + id + " in folder: " + folder, 3)
+            self.log.warning("Cannot find OCR file for id: " + id + " in folder: " + folder, 0)
             return False
 
-        log("Reading OCR data from: " + file, 3)
+        self.log.info("Reading OCR data from: " + file, 0)
 
         try:
             # Process OCR2
@@ -1201,15 +1085,17 @@ class process_OCR2(thetis):
                     if len(line.split("\t")) > 100:
                         index_begin = idx
                         break
-            df = pd.read_csv(file, sep="\t+|\t+\t+", skiprows=index_begin, engine='python')
+            df = pd.read_csv(file, sep="\t+|\t+\t+", skiprows=index_begin, engine='python', encoding="ISO-8859-1", on_bad_lines="skip")
             df = df[df.isnull().sum(axis=1) < 20]
+            df["Timestamp (s)"] = pd.to_numeric(df["Timestamp (s)"], errors="coerce")
+            df = df.dropna(subset=["Timestamp (s)"])
             df["depth"] = np.interp(np.array(df["Timestamp (s)"]), ctd["time"], ctd["depth"]) + self.offset
 
             timestamp = np.array(df["Timestamp (s)"])
             depth = np.interp(timestamp, ctd["time"], ctd["depth"]) + self.offset
-            OCR = np.array(df.loc[:, "Chan 1":"Chan 180"])
-            int_time = np.array(df["Integration Time"]) / 1000
-            dark_ave = np.array(df["Dark Ave"])
+            OCR = df.loc[:, "Chan 1":"Chan 180"].apply(pd.to_numeric, errors="coerce").to_numpy()
+            int_time = pd.to_numeric(df["Integration Time"], errors="coerce").to_numpy() / 1000
+            dark_ave = pd.to_numeric(df["Dark Ave"], errors="coerce").to_numpy()
             header = np.array(df["Header"])
 
             OCR = (OCR.transpose() - dark_ave).transpose()
@@ -1262,12 +1148,12 @@ class process_OCR2(thetis):
             self.data["Lu0"] = Lu0
 
             if len(time) < 20:
-                log("Erroneous profile", 3)
+                self.log.warning("Erroneous profile", 1)
                 return False
 
-            log("Successfully read data", 3)
-        except:
-            print(sys.exc_info())
-            log("Failed to parse data")
+            self.log.info("Successfully read data", 1)
+        except Exception as e:
+            print(e)
+            self.log.warning("Failed to parse data", 1)
             return False
         return True

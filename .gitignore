@@ -388,3 +388,6 @@ data/*
 !data/.gitkeep
 !data/README.md
 !data/.bucket
+
+creds.json
+lexplore.bat
