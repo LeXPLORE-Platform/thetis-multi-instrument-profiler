@@ -2,6 +2,7 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
+import ftplib
 from datetime import datetime
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
