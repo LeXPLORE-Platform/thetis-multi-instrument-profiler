@@ -36,16 +36,16 @@ class Thetis(GenericInstrument):
 
         self.id = ""
         self.folder = ""
+        self.grid_depths = np.arange(1, 50.1, 0.1)
 
 
     def export_data(self):
         return self.data
 
     def resample_to_fixed_grid(self, products, type):
-        bin_size = 0.1
         if "depth" not in products:
             products["depth"] = {'var_name': 'depth', 'dim': ('depth',), 'unit': 'm', 'long_name': 'depth',
-                                 "data": np.arange(1, 50.1, bin_size)}
+                                 "data": self.grid_depths}
         if "time" not in products:
             products["time"] = {'var_name': 'time', 'dim': ('time',), 'unit': 'seconds since 1970-01-01 00:00:00',
                                 'long_name': 'time', "data": [self.data["time"][0]]}
@@ -250,6 +250,8 @@ class CTD(Thetis):
 
         self.offset = 0
         self.type = "CTD"
+        # An event on an input also flags the variables derived from it
+        self.event_propagation = {"temp": ["sal", "cond20"], "cond": ["sal", "cond20"], "press": ["depth"]}
         self.grid = ["cond", "temp", "sal", "cond20"]
 
     def read_data(self, id, folder):
@@ -316,6 +318,8 @@ class DO(Thetis):
 
         self.offset = 0.1
         self.type = "DO"
+        # An event on an input also flags the variables derived from it
+        self.event_propagation = {"do": ["dosat"], "temp": ["do_at_sat", "dosat"]}
         self.grid = ["do", "dosat"]
 
     def read_data(self, id, folder, ctd):
@@ -751,6 +755,8 @@ class ACS(Thetis):
 
         self.offset = 0.22
         self.type = "ACS"
+        # An event on an input also flags the variables derived from it
+        self.event_propagation = {"a": ["b", "a700", "b700", "aLH676"], "c": ["b", "c700", "b700", "Sk"]}
         self.grid = ["a700", "b700", "c700", "aLH676", "Sk"]
 
     def read_calibration_data(self, calibration_dir, time):
@@ -916,7 +922,8 @@ class ACS(Thetis):
             qa_data = self.data[name]
 
             if key in ["a", "b", "c", "a700", "b700", "c700", "aLH676", "Sk"]:
-                qa_data[despike(self.data[key], prominence=1)] = 1
+                spikes = despike(self.data[key], prominence=1)
+                qa_data[spikes] = np.bitwise_or(np.asarray(qa_data[spikes]).astype(int), 1)
 
             self.data[name] = np.array(qa_data)
 
@@ -943,6 +950,8 @@ class OCR1(Thetis):
 
         self.offset = -0.15
         self.type = "OCR1"
+        # An event on an input also flags the variables derived from it
+        self.event_propagation = {"Ed": ["Ed0", "kd_Ed"]}
         self.grid = ["Ed0", "kd_Ed"]
 
     def read_data(self, id, folder, calibration_dir, ctd):
@@ -1068,6 +1077,8 @@ class OCR2(Thetis):
 
         self.offset = -0.15
         self.type = "OCR2"
+        # An event on an input also flags the variables derived from it
+        self.event_propagation = {"Lu": ["Lu0"]}
         self.grid = ["Lu0"]
 
     def read_data(self, id, folder, calibration_dir, ctd):

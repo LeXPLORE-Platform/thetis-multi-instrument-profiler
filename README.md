@@ -141,10 +141,62 @@ quality checks and further investigation is needed, quality flag "0" indicates t
 
 Quality checks include but are not limited to range validation, data type checking and flagging missing data.
 
-###  Events 
+### Events
 
-Maintenance dates, interesting or surprising events, non identified by the quality assurance outliers are listed in the folder `events`. coming soon
-Check also the `sensor_history` (if existing)
+Maintenance dates, sensor problems and other events not identified by the automatic quality assurance are listed in `notes/`.
+They are applied to the Level 1 quality flags (`<variable>_qual = 1`) when the data are processed, so the flagged data are NaN in Level 2.
+
+- `notes/events.csv`: shared between all instruments. Use it for events that affect the whole profiler (`All`), or for Level 2 variables (see the table below).
+- `notes/events_<instrument>.csv`: one file per instrument (`CTD`, `DO`, `PAR`, `TRIP1`, `TRIP2`, `ACS`, `OCR1`, `OCR2`, the names of the Level 1 folders). Its parameters are the variable names in that instrument's Level 1 files.
+
+All files are semicolon separated with the columns `start;stop;parameter;depth;comments`:
+
+- `start`, `stop`: UTC, format `YYYYMMDD HH:MM:SS` (inclusive). An empty `stop` means the event is ongoing.
+  The event applies to every profile whose time range overlaps this window, and always to the whole profile unless a `depth` is given: the exact times within a profile do not matter.
+- `parameter`: `All` or a comma separated list of variable names (e.g. `bb440,bb532`).
+- `depth`: empty or `All` flags the whole profile. Otherwise only the points of the profile whose depth matches are flagged:
+  a single depth (`5`), a range (`10-20`) or a comma separated list of both (`2.5,10-20`), in metres.
+  Depths can be slightly negative at the surface, so negative values are allowed (e.g. `-1.5-30`).
+  A single depth matches within ±0.05 m (half the Level 2 grid spacing) for CTD, DO, PAR, TRIP1 and TRIP2, and within half the sample spacing for ACS (about ±0.01 m) and OCR (about ±0.09 m).
+  Variables without a depth axis (`Ed0`, `kd_Ed`, `Lu0`) are flagged for the whole profile whatever the depth.
+- `comments`: free text description of the event. If it contains a `;`, put it in double quotes.
+
+In the shared `notes/events.csv`, `All` flags every instrument. A named parameter flags only the instrument it belongs to:
+the instrument that has it in Level 2 (table below), otherwise the only instrument that has it in Level 1 (e.g. `a`, `Ed`, `do_at_sat`).
+`press`, `depth`, `time` and `wavelength` exist in several instruments and are not in Level 2, so they must go in an instrument file; the shared file logs a warning and skips them.
+
+| Level 2 variables | Instrument file |
+|---|---|
+| `temp`, `cond`, `sal`, `cond20` | `events_CTD.csv` |
+| `do`, `dosat` | `events_DO.csv` |
+| `par` | `events_PAR.csv` |
+| `bb440`, `bb532`, `bb630` | `events_TRIP1.csv` |
+| `bb700`, `chla`, `cdom` | `events_TRIP2.csv` |
+| `a700`, `b700`, `c700`, `aLH676`, `Sk` | `events_ACS.csv` |
+| `Ed0`, `kd_Ed` | `events_OCR1.csv` |
+| `Lu0` | `events_OCR2.csv` |
+
+`Rrs` is calculated in Level 2 from `Lu0` and `Ed0`, and is NaN where either is flagged.
+
+Flagging a variable also flags the variables calculated from it in the same instrument:
+
+- CTD: `temp`, `cond` → `sal`, `cond20`; `press` → `depth`
+- DO: `do` → `dosat`; `temp` → `do_at_sat`, `dosat`
+- ACS: `a` → `b`, `a700`, `b700`, `aLH676`; `c` → `b`, `c700`, `b700`, `Sk`
+- OCR1: `Ed` → `Ed0`, `kd_Ed`
+- OCR2: `Lu` → `Lu0`
+
+**CTD events also affect the other instruments.** All other instruments take their depth from the CTD, DO uses the CTD salinity and ACS uses the CTD temperature and salinity.
+Data flagged in the CTD is NaN when it is passed on, so a CTD event on `temp`, `cond` or `sal` blanks `do_at_sat`, `dosat` and the ACS variables at those depths,
+and a CTD event on `press`, `depth` or `All` removes the depth of every other instrument. ACS, OCR1 and OCR2 are then not processed at all for that profile, so no Level 1 file is written for them.
+Those values are NaN in Level 1 of the other instruments, not flagged.
+
+In Level 2 the data are interpolated onto the depth grid, so the bins between a flagged sample and its unflagged neighbours are NaN too.
+Where samples are sparse (e.g. DO in the decimated live data, about 0.6 m apart) this extends beyond the event's depth range.
+
+Existing Level 1 files and Level 2 profiles are not overwritten by a reprocess, so events added for profiles that were already processed only take effect after
+deleting `data/Level1` and `data/Level2` and reprocessing the complete dataset (`python scripts/main.py`).
+Problems in the events files are logged as warnings and do not stop processing.
 
 ## Collaborators
 

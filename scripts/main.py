@@ -5,7 +5,7 @@ import json
 import time
 import argparse
 from instruments import CTD, DO, PAR, TRIP1, TRIP2, ACS, OCR1, OCR2, process_grid
-from general.functions import logger, files_in_directory
+from general.functions import logger, files_in_directory, event_owners, check_shared_events
 from functions import retrieve_new_files, parse_ids_from_files
 
 def main(server=False, logs=False):
@@ -20,7 +20,16 @@ def main(server=False, logs=False):
         os.makedirs(directories[directory], exist_ok=True)
     directories["Level0"] = os.path.join(directories["Level0"], "Processed")
     calibration = os.path.join(repo, "calibration")
-    qa_file = os.path.join(repo, "notes/quality_assurance.json")
+    qa_file = os.path.join(repo, "notes", "quality_assurance.json")
+    shared_events = os.path.join(repo, "notes", "events.csv")
+    instruments = {"CTD": CTD, "DO": DO, "PAR": PAR, "TRIP1": TRIP1, "TRIP2": TRIP2, "ACS": ACS, "OCR1": OCR1, "OCR2": OCR2}
+    owners, ambiguous = event_owners({name: cls(log=log) for name, cls in instruments.items()}, log)
+
+    def apply_events(sensor, name):
+        sensor.apply_events(shared_events, profile=True, owners=owners, instrument=name, shared=True)
+        sensor.apply_events(os.path.join(repo, "notes", "events_{}.csv".format(name)), profile=True,
+                            owners=owners, instrument=name)
+
     edited_files = []
 
     log.begin_stage("Collecting inputs")
@@ -38,70 +47,82 @@ def main(server=False, logs=False):
         log.info("Reprocessing complete dataset from {}".format(directories["Level0"]))
     log.end_stage()
 
+    log.begin_stage("Checking shared events file")
+    check_shared_events(shared_events, owners, ambiguous, log)
+    log.end_stage()
+
     log.begin_stage("Processing data...")
     ids = parse_ids_from_files(files)
 
     for id in ids:
         l2_datasets = {}
-        sensor = CTD()
+        sensor = CTD(log=log)
         if sensor.read_data(id, directories["Level0"]):
             sensor.multiple_profiles()
             sensor.quality_assurance(file_path=qa_file)
+            apply_events(sensor, "CTD")
             edited_files.extend(sensor.export(os.path.join(directories["Level1"], "CTD"), "L1_LexploreThetis_CTD"))
             sensor.mask_data()
             ctd_data = sensor.export_data()
             l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-            sensor = DO()
+            sensor = DO(log=log)
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
                 sensor.quality_assurance(file_path=qa_file)
+                apply_events(sensor, "DO")
                 edited_files.extend(sensor.export(os.path.join(directories["Level1"], "DO"), "L1_LexploreThetis_DO"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-            sensor = PAR()
+            sensor = PAR(log=log)
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
                 sensor.quality_assurance(file_path=qa_file)
+                apply_events(sensor, "PAR")
                 edited_files.extend(sensor.export(os.path.join(directories["Level1"], "PAR"), "L1_LexploreThetis_PAR"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-            sensor = TRIP1()
+            sensor = TRIP1(log=log)
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
                 sensor.quality_assurance(file_path=qa_file)
+                apply_events(sensor, "TRIP1")
                 edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP1"), "L1_LexploreThetis_TRIP1"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-            sensor = TRIP2()
+            sensor = TRIP2(log=log)
             if sensor.read_data(id, directories["Level0"], ctd_data):
                 sensor.multiple_profiles()
                 sensor.quality_assurance(file_path=qa_file)
+                apply_events(sensor, "TRIP2")
                 edited_files.extend(sensor.export(os.path.join(directories["Level1"], "TRIP2"), "L1_LexploreThetis_TRIP2"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-            sensor = ACS()
+            sensor = ACS(log=log)
             if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
                 sensor.quality_assurance(file_path=qa_file)
                 sensor.custom_quality_flags()
+                apply_events(sensor, "ACS")
                 edited_files.extend(sensor.export(os.path.join(directories["Level1"], "ACS"), "L1_LexploreThetis_ACS"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "depth")
 
-            sensor = OCR1()
+            sensor = OCR1(log=log)
             if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
                 sensor.quality_assurance(file_path=qa_file)
+                apply_events(sensor, "OCR1")
                 edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR1"), "L1_LexploreThetis_OCR1"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "wavelength")
 
-            sensor = OCR2()
+            sensor = OCR2(log=log)
             if sensor.read_data(id, directories["Level0"], calibration, ctd_data):
                 sensor.quality_assurance(file_path=qa_file)
+                apply_events(sensor, "OCR2")
                 edited_files.extend(sensor.export(os.path.join(directories["Level1"], "OCR2"), "L1_LexploreThetis_OCR2"))
                 sensor.mask_data()
                 l2_datasets = sensor.resample_to_fixed_grid(l2_datasets, "wavelength")
